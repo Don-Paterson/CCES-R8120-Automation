@@ -80,11 +80,22 @@ try {
         return
     }
 
-    $df = Invoke-CPBash -Session $session -Command "df -k /var/log | tail -1 | awk '{print \$4}'" -Quiet
-    $freeMb = [int](($df.Output -replace '\D', '')) / 1024
-    Write-CPLog ("Free space in /var/log: {0:N0} MB (the bundle needs about {1:N0} MB plus room to unpack)" -f $freeMb, ($bundleMb * 2)) INFO
-    if ($freeMb -lt ($bundleMb * 2)) {
-        Write-CPLog 'There may not be enough room in /var/log. Clear old packages with: installer clean or remove /var/log/*.tar.' WARN
+    # df -k wraps onto two lines when the device name is long, which Gaia's LVM names are,
+    # so the Available column lands in a different field. -P forces one line per filesystem.
+    $df = Invoke-CPBash -Session $session -Command "df -kP /var/log | tail -1 | tr -s ' ' | cut -d' ' -f4" -TimeoutSec 120 -Quiet
+    $freeKb = 0
+    foreach ($l in ($df.Output -split "`n")) {
+        if ($l.Trim() -match '^(\d+)$') { $freeKb = [int64]$Matches[1]; break }
+    }
+    $freeMb = [math]::Round($freeKb / 1024)
+
+    if ($freeKb -le 0) {
+        Write-CPLog 'Could not read the free space in /var/log - skipping the space check.' WARN
+    } else {
+        Write-CPLog ("Free space in /var/log: {0:N0} MB (the bundle needs about {1:N0} MB plus room to unpack)" -f $freeMb, ($bundleMb * 2)) INFO
+        if ($freeMb -lt ($bundleMb * 2)) {
+            Write-CPLog 'There may not be enough room in /var/log. Clear old packages with: installer clean or remove /var/log/*.tar.' WARN
+        }
     }
 
     if (-not $SkipLicenseCheck) {

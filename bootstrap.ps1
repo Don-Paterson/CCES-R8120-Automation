@@ -121,7 +121,7 @@ function Show-Menu {
         Write-Host '   2   A-EPM  - validate the answer file only'     -ForegroundColor White
         Write-Host '   3   A-EPM  - build: FTW, licence, contract, CPUSE agent' -ForegroundColor White
         Write-Host '   4   A-EPM  - install Jumbo Take 26' -ForegroundColor White
-        Write-Host '         (after enabling EPM + SmartEvent and NAT in SmartConsole)' -ForegroundColor DarkGray
+        Write-Host '         (do lab guide pages 149-174 first; this is page 175, Task 2A-3)' -ForegroundColor DarkGray
         Write-Host '   5   A-EPM-02 - build secondary management server' -ForegroundColor White
         Write-Host '   6   A-EPM-02 - build and install Jumbo Take 26'   -ForegroundColor White
         Write-Host ''

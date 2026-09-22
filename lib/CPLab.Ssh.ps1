@@ -626,17 +626,34 @@ function Install-CPServiceContract {
         Write-CPLog 'The service contract did not install cleanly - install it by hand in SmartConsole if CPUSE complains.' WARN
         return $false
     }
-    $null = Invoke-CPBash -Session $Session -Command 'contract_util print 2>/dev/null | head -20 || true' -TimeoutSec 120
+    # No contract_util print here - it wants an install type argument and just prints usage.
+    # The cplic contract put output above already lists the coverage.
     Write-CPLog 'Service contract installed.' OK
     return $true
 }
 
 function Get-CPDaBuild {
-    <# Returns the installed CPUSE Deployment Agent build number, or 0 if it cannot be read. #>
+    <#
+    .SYNOPSIS
+        Returns the installed CPUSE Deployment Agent build number, or 0 if it cannot be read.
+    .DESCRIPTION
+        Asks the product registry first, which returns the number on its own. The Clish
+        fallback is parsed line by line: taking the first number anywhere in that output
+        picks up unrelated values (a real run reported 771 for a 2337 agent).
+    #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][object]$Session)
+
+    $r = Invoke-CPBash -Session $Session -Command 'cpprod_util CPPROD_GetValue "DeploymentAgent" "BuildNumber" 1 2>/dev/null' -TimeoutSec 180 -Quiet
+    if ($r.Output -match '(?m)^\s*(\d{3,6})\s*$') { return [int]$Matches[1] }
+
     $r = Invoke-CPClish -Session $Session -Command 'show installer status build' -TimeoutSec 180 -Quiet
-    if ($r.Output -match '(\d{3,})') { return [int]$Matches[1] }
+    foreach ($line in ($r.Output -split "`n")) {
+        if ($line -match '(?i)build|agent|version') {
+            if ($line -match '(\d{4,6})') { return [int]$Matches[1] }
+        }
+    }
+    if ($r.Output -match '(\d{4,6})') { return [int]$Matches[1] }
     return 0
 }
 
@@ -677,8 +694,16 @@ function Install-CPDeploymentAgent {
     $remote = Copy-CPFileToHost -Session $Session -LocalPath $LocalAgentPath -RemoteDir '/var/log' -SkipIfSameSize
     Write-CPLog 'Installing the Deployment Agent package...' STEP
     $r = Invoke-CPBash -Session $Session -Command "printf 'y\ny\n' | clish -c `"installer agent install $remote`"" -TimeoutSec 1800
-    Start-Sleep -Seconds 30
-    $after = Get-CPDaBuild -Session $Session
+
+    # "the Deployment Agent restarts and the CLISH session is terminated" - so let it settle
+    # before asking, and give it a couple of attempts.
+    $after = 0
+    foreach ($attempt in 1..3) {
+        Start-Sleep -Seconds 30
+        $after = Get-CPDaBuild -Session $Session
+        if ($wanted -le 0 -or $after -ge $wanted) { break }
+        Write-CPLog "Agent reports build $after - waiting for it to finish restarting (attempt $attempt of 3)..." INFO
+    }
     if ($wanted -gt 0 -and $after -lt $wanted) {
         Write-CPLog "Expected build $wanted but the agent reports $after - check /var/log/CPda for details." WARN
         return $false

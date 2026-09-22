@@ -7,8 +7,8 @@ run from **A-GUI**. It builds the Endpoint Security Management Servers end to en
 |---|---|---|
 | 0 | `scripts\Test-LabPrereqs.ps1` | Read-only pre-flight: transport, files, hosts |
 | 1 | `scripts\Invoke-AEPM-FTW.ps1` | A-EPM First Time Wizard, licence, service contract, CPUSE Deployment Agent |
-| — | *manual* | SmartConsole: enable Endpoint Policy Management + SmartEvent, configure NAT, install policy |
-| 2 | `scripts\Install-JumboT26.ps1` | R81.20 Jumbo Hotfix Accumulator **Take 26** via CPUSE |
+| — | *manual* | SmartConsole: enable Endpoint Policy Management + SmartEvent, configure NAT, install policy — **lab guide pages 149–174** |
+| 2 | `scripts\Install-JumboT26.ps1` | R81.20 Jumbo Hotfix Accumulator **Take 26** via CPUSE — **picks up at page 175**, Task 2A-3 |
 | 3 | `scripts\Invoke-AEPM02-FTW.ps1` | A-EPM-02 secondary management server (Lab 6B), agent, optionally the Jumbo |
 
 ## Quick start on A-GUI
@@ -68,10 +68,10 @@ cd <repo>
 .\scripts\Invoke-AEPM-FTW.ps1 -DryRun
 .\scripts\Invoke-AEPM-FTW.ps1
 
-# --- manual, in SmartConsole against A-EPM ---
+# --- manual, in SmartConsole against A-EPM: lab guide pages 149-174 ---
 #   * enable Endpoint Policy Management and SmartEvent on the management object
 #   * configure NAT per the lab guide, install policy
-# ---------------------------------------------
+# --- the script resumes at page 175, Task 2A-3 ------------------------
 
 # Stage 2
 .\scripts\Install-JumboT26.ps1

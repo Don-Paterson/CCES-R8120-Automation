@@ -155,10 +155,13 @@ try {
 
     Write-CPLog '' INFO
     Write-CPLog '================ A-EPM is ready for the manual steps ================' OK
-    Write-CPLog "1. SmartConsole to $TargetIp as $($cfg.MgmtAdminUser)" INFO
-    Write-CPLog '2. Enable Endpoint Policy Management and SmartEvent on the management object' INFO
-    Write-CPLog '3. Configure NAT as per the lab guide, then install the policy' INFO
-    Write-CPLog '4. Run:  .\Install-JumboT26.ps1' INFO
+    Write-CPLog 'CCES R81.20 lab guide (Kortext) - Lab 2A, pages 149 to 174:' INFO
+    Write-CPLog "  * SmartConsole to $TargetIp as $($cfg.MgmtAdminUser)" INFO
+    Write-CPLog '  * Enable Endpoint Policy Management and SmartEvent on the management object' INFO
+    Write-CPLog '  * Configure NAT, then install the policy' INFO
+    Write-CPLog '' INFO
+    Write-CPLog 'The script picks up again at page 175 - Task 2A-3, Install the Jumbo Hotfix' INFO
+    Write-CPLog 'Accumulator - which is menu option 4, or:  .\Install-JumboT26.ps1' INFO
     Write-CPLog '=====================================================================' OK
 } finally {
     if ($session) { Disconnect-CPHost -Session $session }
