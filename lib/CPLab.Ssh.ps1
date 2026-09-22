@@ -1124,13 +1124,22 @@ echo "--- login ---"
 mgmt_cli -r true login > "$SID" || fail login
 grep -qi sid "$SID" || fail login-no-session
 
+echo "--- state BEFORE ---"
+mgmt_cli -s "$SID" show checkpoint-host name "__OBJ__" --format json > /tmp/cces_aepm_before.json 2>&1
+for k in endpoint-policy smart-event-server smart-event-correlation logging-and-status; do
+    echo "BEFORE $(grep -o "\"$k\"[^,]*" /tmp/cces_aepm_before.json | head -1)"
+done
+echo "BEFORE $(grep -o '"ipv4-address"[^,]*' /tmp/cces_aepm_before.json | tail -1)"
+
 echo "--- set checkpoint-host __OBJ__ ---"
 mgmt_cli -s "$SID" set checkpoint-host name "__OBJ__" \
     __SETARGS__ \
     --format json || fail set-checkpoint-host
 
 echo "--- publish ---"
-mgmt_cli -s "$SID" publish --format json || fail publish
+PUBOUT=$(mgmt_cli -s "$SID" publish --format json) || fail publish
+echo "$PUBOUT"
+echo "$PUBOUT" | grep -qi '"number-of-.*changes"[[:space:]]*:[[:space:]]*0' && echo "CCES_NO_CHANGES" 
 
 echo "--- install database ---"
 DBOUT=$(mgmt_cli -s "$SID" install-database targets "__OBJ__" --format json)
@@ -1151,6 +1160,7 @@ fi
 
 echo "--- verify ---"
 mgmt_cli -s "$SID" show checkpoint-host name "__OBJ__" --format json > /tmp/cces_aepm.json 2>&1
+echo "--- state AFTER ---"
 grep -o '"endpoint-policy"[^,]*'         /tmp/cces_aepm.json
 grep -o '"smart-event-correlation"[^,]*' /tmp/cces_aepm.json
 grep -o '"smart-event-server"[^,]*'      /tmp/cces_aepm.json
@@ -1181,6 +1191,15 @@ echo "CCES_DONE"
     if ($r.Output -notmatch 'CCES_DONE') {
         Write-CPLog 'The API script did not run to completion.' ERROR
         return $false
+    }
+
+    foreach ($l in ($r.Output -split "`n")) {
+        if ($l -match '^BEFORE ' -or $l -match '^\s*"(endpoint-policy|smart-event|logging-and-status|ipv4-address)') {
+            Write-CPLog "    $($l.Trim())" INFO
+        }
+    }
+    if ($r.Output -match 'CCES_NO_CHANGES') {
+        Write-CPLog 'Publish had nothing to commit - the object was already in the wanted state.' WARN
     }
 
     if ($r.Output -match '"endpoint-policy"\s*:\s*true') {
