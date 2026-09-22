@@ -110,7 +110,10 @@ try {
         }
 
         Start-Sleep -Seconds 45
-        if (-not (Wait-CPFtwComplete -Session $session -TimeoutMin 75)) {
+        $wantHost = ''
+        if ($answer -match '(?m)^\s*hostname="?([^"\r\n]+)"?') { $wantHost = $Matches[1].Trim() }
+
+        if (-not (Wait-CPFtwComplete -Session $session -TimeoutMin 75 -ExpectedHostname $wantHost)) {
             throw 'The First Time Wizard did not complete. See the log lines above and /var/log/cces_ftw.log on the host.'
         }
         if (-not (Initialize-CPShellAccess -Session $session -ExpertPassword $cfg.ExpertPassword -ExpertPasswordHash $cfg.ExpertPasswordHash)) {

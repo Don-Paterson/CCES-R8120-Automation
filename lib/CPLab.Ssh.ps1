@@ -584,8 +584,22 @@ function Invoke-CPFtw {
 
     Write-CPLog 'Running the First Time Wizard - this takes several minutes and will reboot the host.' STEP
     # Detached so the SSH drop at reboot does not kill it, output kept for troubleshooting.
-    $cmd = "nohup config_system -f $RemotePath > /var/log/cces_ftw.log 2>&1 &"
-    $null = Invoke-CPBash -Session $Session -Command $cmd -TimeoutSec 60 -Quiet
+    $cmd = "rm -f /var/log/cces_ftw.log; nohup config_system -f $RemotePath > /var/log/cces_ftw.log 2>&1 & echo LAUNCHED:\$!"
+    $launch = Invoke-CPBash -Session $Session -Command $cmd -TimeoutSec 60 -Quiet
+    if ($launch.Output -match 'LAUNCHED:(\d+)') { Write-CPLog "config_system started as pid $($Matches[1])." OK }
+
+    # Confirm it is genuinely alive before settling in to watch for an hour. The [c] keeps
+    # pgrep from matching the probe's own command line.
+    Start-Sleep -Seconds 20
+    $alive = Invoke-CPBash -Session $Session -Command 'pgrep -f "[c]onfig_system -f" >/dev/null 2>&1 && echo ALIVE || echo DEAD; echo "---"; tail -20 /var/log/cces_ftw.log 2>/dev/null' -TimeoutSec 90 -Quiet
+    if ($alive.Output -match 'DEAD') {
+        $done = Invoke-CPBash -Session $Session -Command 'test -f /etc/.wizard_accepted && echo DONE || echo PENDING' -TimeoutSec 60 -Quiet
+        if ($done.Output -notmatch 'DONE') {
+            Write-CPLog 'config_system exited within 20 seconds without completing. Its output:' ERROR
+            foreach ($l in ($alive.Output -split "`n")) { if ($l.Trim() -and $l -notmatch '^---$') { Write-CPLog "    $l" ERROR } }
+            throw 'The First Time Wizard did not start. See /var/log/cces_ftw.log on the host.'
+        }
+    }
     return 'Started'
 }
 
@@ -1061,8 +1075,11 @@ function Wait-CPFtwComplete {
         [Parameter(Mandatory)][object]$Session,
         [int]$TimeoutMin = 75,
         [int]$PollSec = 30,
-        [int]$BackUpTimeoutSec = 2400
+        [int]$BackUpTimeoutSec = 2400,
+        [string]$ExpectedHostname = ''
     )
+
+    $script:hostnameSeen = $false
 
     $deadline = (Get-Date).AddMinutes($TimeoutMin)
     $started = Get-Date
@@ -1090,15 +1107,28 @@ function Wait-CPFtwComplete {
         }
 
         try {
+            # The bracket is deliberate: pgrep -f matches full command lines, and the shell
+            # running this probe has "config_system -f" in its own command line. Without
+            # the [c] the probe matches itself and reports RUNNING for ever.
             $probe = Invoke-CPBash -Session $Session -TimeoutSec 90 -Quiet -Command @'
-pgrep -f "config_system -f" >/dev/null 2>&1 && echo WIZARD_RUNNING || echo WIZARD_GONE
+pgrep -f "[c]onfig_system -f" >/dev/null 2>&1 && echo WIZARD_RUNNING || echo WIZARD_GONE
 test -f /etc/.wizard_accepted && echo MARKER_PRESENT || echo MARKER_ABSENT
+echo "HOSTNAME=$(hostname)"
 '@
             $running = $probe.Output -match 'WIZARD_RUNNING'
             $marker  = $probe.Output -match 'MARKER_PRESENT'
+            $hn = if ($probe.Output -match 'HOSTNAME=(\S+)') { $Matches[1] } else { '' }
+
+            # config_system sets the hostname early, so a changed hostname is the first
+            # real evidence of progress - much better than trusting a process to exist.
+            if ($ExpectedHostname -and $hn -eq $ExpectedHostname -and -not $script:hostnameSeen) {
+                Write-CPLog "Hostname is now '$hn' - the wizard is making progress." OK
+                $script:hostnameSeen = $true
+            }
 
             if ($running) {
-                Write-CPLog "Wizard still running (${mins}m elapsed)..." INFO
+                $where = if ($hn) { " [hostname: $hn]" } else { '' }
+                Write-CPLog "Wizard still running (${mins}m elapsed)$where..." INFO
             } elseif ($marker) {
                 Write-CPLog "Wizard finished after ${mins}m without needing a reboot." OK
                 return $true
