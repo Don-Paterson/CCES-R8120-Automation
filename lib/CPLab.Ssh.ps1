@@ -298,8 +298,24 @@ function Enable-CPBashShell {
     if ($Session.Shell -eq 'bash') { return $true }
 
     Write-CPLog "Switching $($Session.UserName) shell to /bin/bash on $($Session.HostName)..." STEP
-    $null = Invoke-CPCommand -Session $Session -Command "set user $($Session.UserName) shell /bin/bash" -Quiet
-    $null = Invoke-CPCommand -Session $Session -Command 'save config' -Quiet
+    $set = Invoke-CPCommand -Session $Session -Command "set user $($Session.UserName) shell /bin/bash" -Quiet
+
+    # Gaia's config database lock is held per session. An interactive Clish login
+    # elsewhere (a PuTTY window left open) leaves every other session read-only, and the
+    # set is refused. 'lock database override' takes it - but the lock only lasts for the
+    # session that took it, so the override and the set must run in ONE session, which
+    # means an interactive one rather than separate exec-channel commands.
+    if ($set.Output -match '(?i)lock|read[- ]only|not have (the )?permission|config.*denied') {
+        Write-CPLog 'The Clish config database is locked by another session - taking the lock.' WARN
+        $t = Invoke-CPShellScript -Session $Session -TimeoutSec 90 -Lines @(
+            'lock database override',
+            "set user $($Session.UserName) shell /bin/bash",
+            'save config'
+        )
+        if ($t -match '(?i)error|invalid') { Write-CPLog 'The override attempt reported an error.' WARN }
+    } else {
+        $null = Invoke-CPCommand -Session $Session -Command 'save config' -Quiet
+    }
 
     Disconnect-CPHost -Session $Session
     Start-Sleep -Seconds 3
@@ -309,6 +325,8 @@ function Enable-CPBashShell {
 
     if ($Session.Shell -eq 'bash') { Write-CPLog 'Shell is now /bin/bash.' OK; return $true }
     Write-CPLog 'Could not switch the admin shell to /bin/bash.' ERROR
+    Write-CPLog 'Most likely cause: an interactive Clish session elsewhere is holding the' ERROR
+    Write-CPLog 'config lock. Close any PuTTY/SSH windows open to this host and re-run.' ERROR
     return $false
 }
 
@@ -369,16 +387,36 @@ function Invoke-CPShellScript {
     param(
         [Parameter(Mandatory)][object]$Session,
         [Parameter(Mandatory)][string[]]$Lines,
-        [int]$SettleMs = 1500
+        [int]$SettleMs = 1500,
+        [int]$TimeoutSec = 120
     )
 
     if ($Session.Transport.Name -eq 'Plink') {
-        $tmp = [System.IO.Path]::GetTempFileName()
+        # -t forces a pty: 'expert' and 'set expert-password' read their prompts from the
+        # terminal, not stdin, so without one they block forever. And the whole thing runs
+        # under a hard timeout, because a hung plink would otherwise freeze the build.
+        $inFile  = [System.IO.Path]::GetTempFileName()
+        $outFile = [System.IO.Path]::GetTempFileName()
+        $errFile = [System.IO.Path]::GetTempFileName()
         try {
-            Set-Content -LiteralPath $tmp -Value (($Lines + 'exit') -join "`n") -Encoding ASCII -NoNewline:$false
-            $pargs = @('-ssh', '-batch', '-pw', $Session.Password, "$($Session.UserName)@$($Session.HostName)")
-            return (Get-Content -LiteralPath $tmp -Raw | & $Session.Transport.Plink @pargs 2>&1 | Out-String)
-        } finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+            Set-Content -LiteralPath $inFile -Value (($Lines + 'exit') -join "`n") -Encoding ASCII
+            $argList = @('-ssh', '-t', '-batch', '-pw', $Session.Password, "$($Session.UserName)@$($Session.HostName)")
+            $proc = Start-Process -FilePath $Session.Transport.Plink -ArgumentList $argList `
+                        -RedirectStandardInput $inFile -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
+                        -NoNewWindow -PassThru
+            if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
+                Write-CPLog "The interactive session did not finish within ${TimeoutSec}s - killing it." WARN
+                try { $proc.Kill() } catch { }
+                Start-Sleep -Seconds 2
+            }
+            $out = ''
+            foreach ($f in @($outFile, $errFile)) {
+                if (Test-Path -LiteralPath $f) { $out += (Get-Content -LiteralPath $f -Raw -ErrorAction SilentlyContinue) }
+            }
+            return $out
+        } finally {
+            foreach ($f in @($inFile, $outFile, $errFile)) { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }
+        }
     }
 
     $stream = New-SSHShellStream -SessionId $Session.SessionId -TerminalName 'vt100' -Columns 200 -Rows 50 -Width 1000 -Height 500
