@@ -119,6 +119,7 @@ function Invoke-Stage {
     $extra = @{}
     if ($Pwd) { $extra['GaiaPassword'] = $Pwd }
 
+    try {
     switch ($Name) {
         'Prereqs'        { & (Join-Path $s 'Test-LabPrereqs.ps1')  @extra }
         'DryRun'         { & (Join-Path $s 'Invoke-AEPM-FTW.ps1')  -DryRun @extra }
@@ -128,14 +129,25 @@ function Invoke-Stage {
         'Full' {
             Write-Step 'Full A-EPM build: wizard, licence, contract, agent, Endpoint config, Jumbo.'
             Write-Note 'No SmartConsole step. Allow up to two hours.'
-            & (Join-Path $s 'Invoke-AEPM-FTW.ps1')  @extra
-            & (Join-Path $s 'Set-AEPMEndpoint.ps1') @extra
-            & (Join-Path $s 'Install-JumboT26.ps1') -Target 'A-EPM' @extra
+            $began = Get-Date
+            try {
+                & (Join-Path $s 'Invoke-AEPM-FTW.ps1')  @extra
+                & (Join-Path $s 'Set-AEPMEndpoint.ps1') @extra
+                & (Join-Path $s 'Install-JumboT26.ps1') -Target 'A-EPM' @extra
+                Write-Step ("Full build finished in {0:N0} minutes." -f ((Get-Date) - $began).TotalMinutes)
+            } catch {
+                Write-Bad "Full build stopped: $($_.Exception.Message)"
+                Write-Note 'The later stages were skipped. Fix the cause, then re-run - completed stages are detected and skipped.'
+            }
         }
         'Secondary'      { & (Join-Path $s 'Invoke-AEPM02-FTW.ps1') @extra }
         'SecondaryJumbo' { & (Join-Path $s 'Invoke-AEPM02-FTW.ps1') -InstallJumbo @extra }
         'Settings'       { notepad.exe (Join-Path $Root 'config\lab-settings.psd1') }
         'DownloadOnly'   { Write-Note 'Files downloaded, nothing run.' }
+    }
+    } catch {
+        Write-Bad "Stage '$Name' failed: $($_.Exception.Message)"
+        Write-Note 'Returning to the menu. Re-running is safe - finished work is detected and skipped.'
     }
 }
 
