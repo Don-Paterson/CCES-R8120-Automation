@@ -810,18 +810,44 @@ function Get-CPUSEImportedId {
     )
 
     function Select-CPUSELine {
+        <#
+            CPUSE lists packages in two columns separated by runs of spaces:
+
+                Display name                                               Status
+                R81.20 Jumbo Hotfix Accumulator Recommended Jumbo Take 26  Imported
+                R81.20 Jumbo Hotfix Accumulator Take 166                   Available for Download
+
+            The identifier depends on where the package came from. One we imported from a
+            tar is listed by its file name (Check_Point_..._T26_FULL.tgz); one CPUSE
+            downloaded from the cloud is listed by its catalogue display name, spaces and
+            all. Some builds add a leading Num column instead. Handle all three.
+        #>
         param([string]$Text, [string]$Pattern, [switch]$RequireImported)
         if (-not $Text) { return $null }
+
         foreach ($line in ($Text -split "`n")) {
-            # 'Imported' is a package we pushed; 'Downloaded' is one CPUSE fetched from the
-            # cloud itself, which it does automatically for the recommended Jumbo when the
-            # box has internet. Both are on the box and installable. Anything still marked
-            # "Available for Download" is not.
-            if ($RequireImported -and $line -notmatch '(?i)\b(imported|downloaded)\b') { continue }
-            if ($RequireImported -and $line -match '(?i)available for download') { continue }
-            if ($line -notmatch $Pattern) { continue }
-            if ($line -match '^\s*(\d+)\s') { return $Matches[1] }          # indexed form
-            if ($line -match '(Check_Point_\S+)') { return $Matches[1] }      # named form
+            $l = $line.TrimEnd()
+            if (-not $l.Trim()) { continue }
+            if ($l -match '^\s*\*\*') { continue }                       # banner rows
+            if ($l -match '^\s*(Display name|Num\b|=====)') { continue }   # headers
+            if ($l -notmatch $Pattern) { continue }
+
+            # Split on runs of two or more spaces: name on the left, status/type on the right.
+            $parts = @($l -split '\s{2,}' | Where-Object { $_.Trim() })
+            if ($parts.Count -eq 0) { continue }
+            $name   = $parts[0].Trim()
+            $status = if ($parts.Count -gt 1) { $parts[-1].Trim() } else { '' }
+
+            if ($RequireImported) {
+                if ($status -match '(?i)available for download') { continue }
+                if ($status -notmatch '(?i)\b(imported|downloaded)\b') { continue }
+            }
+
+            # An indexed listing: the number is the argument installer install wants.
+            if ($name -match '^(\d+)$' -and $parts.Count -gt 1) { return $parts[1].Trim() }
+            if ($name -match '^(\d+)\s+(.+)$') { return $Matches[2].Trim() }
+
+            return $name
         }
         return $null
     }
@@ -901,7 +927,7 @@ function Install-CPUSEPackage {
 
     if (-not $SkipVerify) {
         Write-CPLog 'Verifying the package against this machine...' STEP
-        $v = Invoke-CPClish -Session $Session -Command "installer verify $id not-interactive" -TimeoutSec 1800
+        $v = Invoke-CPClish -Session $Session -Command "installer verify '$id' not-interactive" -TimeoutSec 1800
         if ($v.Output -match '(?i)cannot be installed|verification failed') {
             throw "CPUSE verification failed:`n$($v.Output)"
         }
@@ -910,7 +936,7 @@ function Install-CPUSEPackage {
 
     Write-CPLog "Installing package $id - allow up to $InstallTimeoutMin minutes; the host will reboot." STEP
     $log = '/var/log/cces_cpuse_install.log'
-    $null = Invoke-CPBash -Session $Session -Command "nohup clish -c `"installer install $id not-interactive`" > $log 2>&1 &" -TimeoutSec 120 -Quiet
+    $null = Invoke-CPBash -Session $Session -Command "nohup clish -c `"installer install '$id' not-interactive`" > $log 2>&1 &" -TimeoutSec 120 -Quiet
 
     $deadline = (Get-Date).AddMinutes($InstallTimeoutMin)
     $started = Get-Date
