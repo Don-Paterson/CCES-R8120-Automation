@@ -1,0 +1,3 @@
+
+config_system -f A-EPM_ftw.sh --dry-run
+config_system -f A-EPM_ftw.sh
