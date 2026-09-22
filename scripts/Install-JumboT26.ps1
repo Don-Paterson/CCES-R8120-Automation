@@ -64,8 +64,8 @@ $bundleMb = [math]::Round((Get-Item -LiteralPath $bundlePath).Length / 1MB)
 Start-CPLog (Join-Path $cfg.LogPath ('JumboT26_{0}_{1:yyyyMMdd-HHmmss}.log' -f $Target, (Get-Date)))
 Write-CPLog "Installing Jumbo Take 26 on $Target ($targetIp) from $BundleFile (${bundleMb} MB)" STEP
 
-$transport = Get-CPTransport -Prefer $Transport -AllowInstall
-$session = Connect-CPHost -HostName $targetIp -UserName $GaiaUser -Password $GaiaPassword -Transport $transport
+$xport = Get-CPTransport -Prefer $Transport -AllowInstall
+$session = Connect-CPHost -HostName $targetIp -UserName $GaiaUser -Password $GaiaPassword -Transport $xport
 
 try {
     if (-not (Initialize-CPShellAccess -Session $session -ExpertPassword $cfg.ExpertPassword -ExpertPasswordHash $cfg.ExpertPasswordHash)) {

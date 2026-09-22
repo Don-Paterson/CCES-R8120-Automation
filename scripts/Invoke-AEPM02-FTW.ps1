@@ -70,8 +70,8 @@ if (Test-CPTcpPort -HostName $cfg.AEpmIp -Port 22) {
     Write-CPLog "Primary $($cfg.AEpmName) ($($cfg.AEpmIp)) is not answering - SIC will fail. Start it first." ERROR
 }
 
-$transport = Get-CPTransport -Prefer $Transport -AllowInstall
-$session = Connect-CPHost -HostName $TargetIp -UserName $GaiaUser -Password $GaiaPassword -Transport $transport
+$xport = Get-CPTransport -Prefer $Transport -AllowInstall
+$session = Connect-CPHost -HostName $TargetIp -UserName $GaiaUser -Password $GaiaPassword -Transport $xport
 
 try {
     if (-not (Initialize-CPShellAccess -Session $session -ExpertPassword $cfg.ExpertPassword -ExpertPasswordHash $cfg.ExpertPasswordHash)) {
@@ -95,7 +95,7 @@ try {
         $null = Wait-CPReboot -HostName $TargetIp -DownTimeoutSec 900 -UpTimeoutSec 2400
         Disconnect-CPHost -Session $session
         Start-Sleep -Seconds 20
-        $session = Connect-CPHost -HostName $TargetIp -UserName $GaiaUser -Password $GaiaPassword -Transport $transport
+        $session = Connect-CPHost -HostName $TargetIp -UserName $GaiaUser -Password $GaiaPassword -Transport $xport
         if (-not (Initialize-CPShellAccess -Session $session -ExpertPassword $cfg.ExpertPassword -ExpertPasswordHash $cfg.ExpertPasswordHash)) {
             throw 'Lost shell access after the reboot.'
         }

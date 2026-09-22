@@ -84,8 +84,8 @@ foreach ($p in @(@{P = $licPath; S = $SkipLicense }, @{P = $contractPath; S = $S
 }
 
 # ------------------------------------------------------------------ connect --
-$transport = Get-CPTransport -Prefer $Transport -AllowInstall
-$session = Connect-CPHost -HostName $TargetIp -UserName $GaiaUser -Password $GaiaPassword -Transport $transport
+$xport = Get-CPTransport -Prefer $Transport -AllowInstall
+$session = Connect-CPHost -HostName $TargetIp -UserName $GaiaUser -Password $GaiaPassword -Transport $xport
 
 try {
     $alreadyBuilt = $false
@@ -115,7 +115,7 @@ try {
 
         Disconnect-CPHost -Session $session
         Start-Sleep -Seconds 20
-        $session = Connect-CPHost -HostName $TargetIp -UserName $GaiaUser -Password $GaiaPassword -Transport $transport
+        $session = Connect-CPHost -HostName $TargetIp -UserName $GaiaUser -Password $GaiaPassword -Transport $xport
         if (-not (Initialize-CPShellAccess -Session $session -ExpertPassword $cfg.ExpertPassword -ExpertPasswordHash $cfg.ExpertPasswordHash)) {
             throw 'Lost shell access after the reboot.'
         }
