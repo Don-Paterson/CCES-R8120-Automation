@@ -23,6 +23,14 @@
     MgmtAdminUser   = 'cpadmin'
     MgmtAdminPass   = 'Chkp!234'
 
+    # --- Endpoint management object (Lab 2A Task 2A-2, done via mgmt_cli) ----
+    AEpmObjectName              = 'A-EPM'
+    AEpmNatIp                   = '203.0.113.103'
+    EnableEndpointPolicy        = $true
+    EnableSmartEventServer      = $false
+    EnableSmartEventCorrelation = $true
+    EnableLoggingAndStatus      = $true
+
     # --- SIC one-time password for the secondary management server -----------
     SicKey          = 'Chkp!234'
 

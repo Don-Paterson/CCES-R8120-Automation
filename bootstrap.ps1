@@ -27,7 +27,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Menu', 'Prereqs', 'DryRun', 'Ftw', 'Jumbo', 'Secondary', 'SecondaryJumbo', 'Settings', 'DownloadOnly')]
+    [ValidateSet('Menu', 'Prereqs', 'DryRun', 'Ftw', 'Endpoint', 'Jumbo', 'Full', 'Secondary', 'SecondaryJumbo', 'Settings', 'DownloadOnly')]
     [string]$Action = 'Menu',
     [string]$InstallPath,
     [string]$GaiaPassword,
@@ -103,7 +103,15 @@ function Invoke-Stage {
         'Prereqs'        { & (Join-Path $s 'Test-LabPrereqs.ps1')  @extra }
         'DryRun'         { & (Join-Path $s 'Invoke-AEPM-FTW.ps1')  -DryRun @extra }
         'Ftw'            { & (Join-Path $s 'Invoke-AEPM-FTW.ps1')  @extra }
+        'Endpoint'       { & (Join-Path $s 'Set-AEPMEndpoint.ps1') @extra }
         'Jumbo'          { & (Join-Path $s 'Install-JumboT26.ps1') -Target 'A-EPM' @extra }
+        'Full' {
+            Write-Step 'Full A-EPM build: wizard, licence, contract, agent, Endpoint config, Jumbo.'
+            Write-Note 'No SmartConsole step. Allow up to two hours.'
+            & (Join-Path $s 'Invoke-AEPM-FTW.ps1')  @extra
+            & (Join-Path $s 'Set-AEPMEndpoint.ps1') @extra
+            & (Join-Path $s 'Install-JumboT26.ps1') -Target 'A-EPM' @extra
+        }
         'Secondary'      { & (Join-Path $s 'Invoke-AEPM02-FTW.ps1') @extra }
         'SecondaryJumbo' { & (Join-Path $s 'Invoke-AEPM02-FTW.ps1') -InstallJumbo @extra }
         'Settings'       { notepad.exe (Join-Path $Root 'config\lab-settings.psd1') }
@@ -119,11 +127,14 @@ function Show-Menu {
         Write-Head
         Write-Host '   1   Pre-flight checks (read-only)'              -ForegroundColor White
         Write-Host '   2   A-EPM  - validate the answer file only'     -ForegroundColor White
-        Write-Host '   3   A-EPM  - build: FTW, licence, contract, CPUSE agent' -ForegroundColor White
-        Write-Host '   4   A-EPM  - install Jumbo Take 26' -ForegroundColor White
-        Write-Host '         (do lab guide pages 149-174 first; this is page 175, Task 2A-3)' -ForegroundColor DarkGray
-        Write-Host '   5   A-EPM-02 - build secondary management server' -ForegroundColor White
-        Write-Host '   6   A-EPM-02 - build and install Jumbo Take 26'   -ForegroundColor White
+        Write-Host ''
+        Write-Host '   3   A-EPM  - wizard, licence, contract, CPUSE agent   (Task 2A-1)' -ForegroundColor White
+        Write-Host '   4   A-EPM  - Endpoint + SmartEvent + NAT, install db  (Task 2A-2)' -ForegroundColor White
+        Write-Host '   5   A-EPM  - install Jumbo Take 26                    (Task 2A-3)' -ForegroundColor White
+        Write-Host '   6   A-EPM  - FULL BUILD: 3 + 4 + 5, no SmartConsole needed' -ForegroundColor Green
+        Write-Host ''
+        Write-Host '   7   A-EPM-02 - build secondary management server' -ForegroundColor White
+        Write-Host '   8   A-EPM-02 - build and install Jumbo Take 26'   -ForegroundColor White
         Write-Host ''
         Write-Host '   S   Edit lab settings (IPs, passwords, paths)'  -ForegroundColor DarkGray
         Write-Host '   F   Open the folder'                            -ForegroundColor DarkGray
@@ -135,9 +146,11 @@ function Show-Menu {
             '1' { Invoke-Stage 'Prereqs'        $Root $Pwd }
             '2' { Invoke-Stage 'DryRun'         $Root $Pwd }
             '3' { Invoke-Stage 'Ftw'            $Root $Pwd }
-            '4' { Invoke-Stage 'Jumbo'          $Root $Pwd }
-            '5' { Invoke-Stage 'Secondary'      $Root $Pwd }
-            '6' { Invoke-Stage 'SecondaryJumbo' $Root $Pwd }
+            '4' { Invoke-Stage 'Endpoint'       $Root $Pwd }
+            '5' { Invoke-Stage 'Jumbo'          $Root $Pwd }
+            '6' { Invoke-Stage 'Full'           $Root $Pwd }
+            '7' { Invoke-Stage 'Secondary'      $Root $Pwd }
+            '8' { Invoke-Stage 'SecondaryJumbo' $Root $Pwd }
             'S' { Invoke-Stage 'Settings'       $Root $Pwd }
             'F' { Start-Process explorer.exe $Root }
             'Q' { return }
