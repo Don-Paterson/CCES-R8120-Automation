@@ -11,6 +11,25 @@ run from **A-GUI**. It builds the Endpoint Security Management Servers end to en
 | 2 | `scripts\Install-JumboT26.ps1` | R81.20 Jumbo Hotfix Accumulator **Take 26** via CPUSE |
 | 3 | `scripts\Invoke-AEPM02-FTW.ps1` | A-EPM-02 secondary management server (Lab 6B), agent, optionally the Jumbo |
 
+## Quick start on A-GUI
+
+```powershell
+irm https://raw.githubusercontent.com/Don-Paterson/CCES-R8120-Automation/main/bootstrap.ps1 | iex
+```
+
+Downloads the repo to `Desktop\CCES-Automation`, unblocks it and puts up a menu of the
+stages above. A `lab-settings.psd1` you have already edited is kept when you re-run it.
+
+Straight to one stage, no menu (parameters need the scriptblock form):
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Don-Paterson/CCES-R8120-Automation/main/bootstrap.ps1))) -Action Prereqs
+```
+
+`-Action` takes `Prereqs`, `DryRun`, `Ftw`, `Jumbo`, `Secondary`, `SecondaryJumbo`,
+`Settings` or `DownloadOnly`. If A-GUI has no route to github.com, copy the folder into
+the lab by hand and run the scripts directly - everything below still applies.
+
 ## Lab topology (Site Alpha)
 
 ```
