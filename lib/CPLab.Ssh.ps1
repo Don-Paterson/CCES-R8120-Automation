@@ -712,6 +712,56 @@ function Install-CPDeploymentAgent {
     return $true
 }
 
+function Get-CPUSEImportedId {
+    <#
+    .SYNOPSIS
+        Returns the CPUSE identifier of an imported package matching a pattern, or $null
+        when it is not in the repository yet.
+    .DESCRIPTION
+        CPUSE builds differ. Some list imported packages with a leading index number and
+        take that number on the command line; others list a "Display name / Status" table
+        with no numbers, and take the package name instead. Both are handled.
+
+        'show installer packages' also lists packages that are only *available for
+        download* - on an R81.20 management that includes Jumbo Takes 166 and 170, which
+        match a plain 'JUMBO' search. Only rows whose status is "Imported" are real.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$Session,
+        [Parameter(Mandatory)][string]$MatchPattern
+    )
+
+    function Select-CPUSELine {
+        param([string]$Text, [string]$Pattern, [switch]$RequireImported)
+        if (-not $Text) { return $null }
+        foreach ($line in ($Text -split "`n")) {
+            if ($RequireImported -and $line -notmatch '(?i)\bimported\b') { continue }
+            if ($line -notmatch $Pattern) { continue }
+            if ($line -match '^\s*(\d+)\s') { return $Matches[1] }          # indexed form
+            if ($line -match '(Check_Point_\S+)') { return $Matches[1] }      # named form
+        }
+        return $null
+    }
+
+    # Verified on R81.20: 'show installer packages imported' lists the package
+    # non-interactively as "Display name / Type" with no Num column, and the display name
+    # is accepted by installer verify / installer install. (The Num table you see when
+    # typing 'installer install' bare is interactive completion help - clish -c only ever
+    # answers "Incomplete command", so there is no point asking for it.)
+
+    # 1. the dedicated imported list, where everything shown is by definition imported
+    $list = Invoke-CPClish -Session $Session -Command 'show installer packages imported' -TimeoutSec 300 -Quiet
+    if ($list.Output -and $list.Output -notmatch '(?i)no packages to display') {
+        $hit = Select-CPUSELine -Text $list.Output -Pattern $MatchPattern
+        if ($hit) { return $hit }
+    }
+
+    # 2. the full list, restricted to rows actually marked Imported
+    $all = Invoke-CPClish -Session $Session -Command 'show installer packages' -TimeoutSec 300 -Quiet
+    return (Select-CPUSELine -Text $all.Output -Pattern $MatchPattern -RequireImported)
+}
+
 function Install-CPUSEPackage {
     <#
     .SYNOPSIS
@@ -725,22 +775,45 @@ function Install-CPUSEPackage {
         [Parameter(Mandatory)][object]$Session,
         [Parameter(Mandatory)][string]$RemotePackagePath,
         [string]$MatchPattern = 'JUMBO',
+        [int]$ImportTimeoutMin = 45,
         [int]$InstallTimeoutMin = 90,
         [switch]$SkipVerify
     )
 
-    Write-CPLog "Importing $RemotePackagePath into CPUSE (can take a few minutes)..." STEP
-    $imp = Invoke-CPClish -Session $Session -Command "installer import local $RemotePackagePath not-interactive" -TimeoutSec 3600
-    if ($imp.Output -match '(?i)failed|error') { Write-CPLog "Import reported a problem - continuing to check the package list." WARN }
+    $id = Get-CPUSEImportedId -Session $Session -MatchPattern $MatchPattern
 
-    $list = Invoke-CPClish -Session $Session -Command 'show installer packages imported' -TimeoutSec 300
-    $id = $null
-    foreach ($line in ($list.Output -split "`n")) {
-        if ($line -match "^\s*(\d+)\s+.*$MatchPattern" -or ($line -match "$MatchPattern" -and $line -match '^\s*(\d+)\s')) {
-            $id = $Matches[1]; break
+    if ($id) {
+        Write-CPLog "Package is already in the CPUSE repository (id $id) - skipping the import." OK
+    } else {
+        Write-CPLog "Importing $RemotePackagePath into CPUSE..." STEP
+        $imp = Invoke-CPClish -Session $Session -Command "installer import local $RemotePackagePath not-interactive" -TimeoutSec 3600
+        if ($imp.Output -match '(?i)failed|error') { Write-CPLog 'Import reported a problem - watching the package list anyway.' WARN }
+
+        # 'installer import local' returns as soon as it has STARTED the import
+        # ("Initiating import of ..."). Copying a 2 GB bundle into the CPUSE repository
+        # takes minutes, so the package list is empty until it finishes.
+        Write-CPLog "CPUSE is importing in the background - waiting up to $ImportTimeoutMin minutes..." STEP
+        $started = Get-Date
+        $deadline = $started.AddMinutes($ImportTimeoutMin)
+
+        while (-not $id -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 30
+            $id = Get-CPUSEImportedId -Session $Session -MatchPattern $MatchPattern
+            if ($id) { break }
+
+            $mins = [int]((Get-Date) - $started).TotalMinutes
+            $st = Invoke-CPClish -Session $Session -Command 'show installer status all' -TimeoutSec 180 -Quiet
+            if ($st.Output -match '(?i)import.*(failed|error)') {
+                throw "CPUSE reported the import failed:`n$($st.Output)"
+            }
+            $pct = if ($st.Output -match '(\d{1,3})\s*%') { " ($($Matches[1])%)" } else { '' }
+            Write-CPLog "Still importing${pct} - ${mins}m elapsed..." INFO
+        }
+
+        if (-not $id) {
+            throw "The package never appeared in the CPUSE repository after $ImportTimeoutMin minutes. Check 'show installer status all' and /var/log/CPda on the host."
         }
     }
-    if (-not $id) { throw "Could not find an imported package matching '$MatchPattern'. Package list was:`n$($list.Output)" }
     Write-CPLog "Imported package id is $id." OK
 
     if (-not $SkipVerify) {
