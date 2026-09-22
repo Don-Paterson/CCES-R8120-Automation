@@ -810,3 +810,90 @@ function Initialize-CPShellAccess {
 }
 
 #endregion fallbacks ---------------------------------------------------------
+#region ftw progress ---------------------------------------------------------
+
+function Wait-CPFtwComplete {
+    <#
+    .SYNOPSIS
+        Waits for config_system to finish, however long it takes.
+    .DESCRIPTION
+        A management First Time Wizard can run well past a fixed timeout before it reboots,
+        so this watches the actual work rather than the clock:
+
+          * host unreachable        -> the wizard has triggered the reboot; wait for it back
+          * config_system running   -> still working, keep waiting and report elapsed time
+          * gone, /etc/.wizard_accepted present -> finished without needing a reboot
+          * gone, no marker         -> it died; the caller gets $false and the log tail
+
+        Reconnects the session in place on the way out, so the caller can carry straight on.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$Session,
+        [int]$TimeoutMin = 75,
+        [int]$PollSec = 30,
+        [int]$BackUpTimeoutSec = 2400
+    )
+
+    $deadline = (Get-Date).AddMinutes($TimeoutMin)
+    $started = Get-Date
+    Write-CPLog "Watching the wizard on $($Session.HostName) - up to $TimeoutMin minutes, reboot included." STEP
+
+    while ((Get-Date) -lt $deadline) {
+        $mins = [int]((Get-Date) - $started).TotalMinutes
+
+        if (-not (Test-CPTcpPort -HostName $Session.HostName -Port 22 -TimeoutMs 4000)) {
+            Write-CPLog "Host went down after ${mins}m - the wizard is rebooting it." OK
+            if (-not (Wait-CPSsh -HostName $Session.HostName -TimeoutSec $BackUpTimeoutSec -Activity 'Waiting for the host to come back')) {
+                Write-CPLog 'The host did not come back.' ERROR
+                return $false
+            }
+            Start-Sleep -Seconds 20
+            try {
+                Disconnect-CPHost -Session $Session
+                $fresh = Connect-CPHost -HostName $Session.HostName -UserName $Session.UserName -Password $Session.Password -Transport $Session.Transport
+                $Session.SessionId = $fresh.SessionId
+                $Session.Shell = $fresh.Shell
+            } catch {
+                Write-CPLog "Reconnect after reboot failed: $($_.Exception.Message)" WARN
+            }
+            return $true
+        }
+
+        try {
+            $probe = Invoke-CPBash -Session $Session -TimeoutSec 90 -Quiet -Command @'
+pgrep -f "config_system -f" >/dev/null 2>&1 && echo WIZARD_RUNNING || echo WIZARD_GONE
+test -f /etc/.wizard_accepted && echo MARKER_PRESENT || echo MARKER_ABSENT
+'@
+            $running = $probe.Output -match 'WIZARD_RUNNING'
+            $marker  = $probe.Output -match 'MARKER_PRESENT'
+
+            if ($running) {
+                Write-CPLog "Wizard still running (${mins}m elapsed)..." INFO
+            } elseif ($marker) {
+                Write-CPLog "Wizard finished after ${mins}m without needing a reboot." OK
+                return $true
+            } else {
+                Write-CPLog "config_system is no longer running and the wizard marker is absent - it failed." ERROR
+                $log = Invoke-CPBash -Session $Session -Command 'tail -n 30 /var/log/cces_ftw.log 2>/dev/null' -TimeoutSec 120
+                return $false
+            }
+        } catch {
+            # A dropped session usually means the reboot has just started; the next loop catches it.
+            Write-CPLog "Probe failed (${mins}m) - most likely the reboot starting. Retrying..." INFO
+            try {
+                Disconnect-CPHost -Session $Session
+                $fresh = Connect-CPHost -HostName $Session.HostName -UserName $Session.UserName -Password $Session.Password -Transport $Session.Transport
+                $Session.SessionId = $fresh.SessionId
+                $Session.Shell = $fresh.Shell
+            } catch { }
+        }
+
+        Start-Sleep -Seconds $PollSec
+    }
+
+    Write-CPLog "Gave up after $TimeoutMin minutes. The wizard may still be running - check with: pgrep -f config_system" ERROR
+    return $false
+}
+
+#endregion ftw progress ------------------------------------------------------

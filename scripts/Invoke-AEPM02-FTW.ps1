@@ -91,11 +91,10 @@ try {
             return
         }
 
-        Start-Sleep -Seconds 60
-        $null = Wait-CPReboot -HostName $TargetIp -DownTimeoutSec 900 -UpTimeoutSec 2400
-        Disconnect-CPHost -Session $session
-        Start-Sleep -Seconds 20
-        $session = Connect-CPHost -HostName $TargetIp -UserName $GaiaUser -Password $GaiaPassword -Transport $xport
+        Start-Sleep -Seconds 45
+        if (-not (Wait-CPFtwComplete -Session $session -TimeoutMin 75)) {
+            throw 'The First Time Wizard did not complete. See the log lines above and /var/log/cces_ftw.log on the host.'
+        }
         if (-not (Initialize-CPShellAccess -Session $session -ExpertPassword $cfg.ExpertPassword -ExpertPasswordHash $cfg.ExpertPasswordHash)) {
             throw 'Lost shell access after the reboot.'
         }
