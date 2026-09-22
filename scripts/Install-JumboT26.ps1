@@ -114,11 +114,21 @@ try {
     }
 
     # ----------------------------------------------------------------- copy --
-    $remote = Copy-CPFileToHost -Session $session -LocalPath $bundlePath -RemoteDir '/var/log' -SkipIfSameSize
+    # CPUSE downloads the recommended Jumbo from the cloud by itself when the box has
+    # internet, so the package may already be on the machine. Check before spending 80
+    # seconds pushing 2 GB across and several more minutes importing it.
+    $already = Get-CPUSEImportedId -Session $session -MatchPattern 'JUMBO|Jumbo|Take_26|T26'
+    if ($already) {
+        Write-CPLog "CPUSE already holds a matching package ($already) - skipping the copy and import." OK
+        $remote = $null
+    } else {
+        $remote = Copy-CPFileToHost -Session $session -LocalPath $bundlePath -RemoteDir '/var/log' -SkipIfSameSize
+    }
     if ($CopyOnly) {
         Write-CPLog "Copied only, as asked. The package is at $remote." OK
         return
     }
+    if (-not $remote) { $remote = '(already in the CPUSE repository)' }
 
     # -------------------------------------------------------------- install --
     $installed = Install-CPUSEPackage -Session $session -RemotePackagePath $remote `

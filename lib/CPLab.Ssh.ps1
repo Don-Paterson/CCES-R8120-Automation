@@ -813,7 +813,12 @@ function Get-CPUSEImportedId {
         param([string]$Text, [string]$Pattern, [switch]$RequireImported)
         if (-not $Text) { return $null }
         foreach ($line in ($Text -split "`n")) {
-            if ($RequireImported -and $line -notmatch '(?i)\bimported\b') { continue }
+            # 'Imported' is a package we pushed; 'Downloaded' is one CPUSE fetched from the
+            # cloud itself, which it does automatically for the recommended Jumbo when the
+            # box has internet. Both are on the box and installable. Anything still marked
+            # "Available for Download" is not.
+            if ($RequireImported -and $line -notmatch '(?i)\b(imported|downloaded)\b') { continue }
+            if ($RequireImported -and $line -match '(?i)available for download') { continue }
             if ($line -notmatch $Pattern) { continue }
             if ($line -match '^\s*(\d+)\s') { return $Matches[1] }          # indexed form
             if ($line -match '(Check_Point_\S+)') { return $Matches[1] }      # named form
