@@ -25,6 +25,29 @@
 
 $script:CPLogFile = $null
 
+function Get-CPSetting {
+    <#
+    .SYNOPSIS
+        Reads a key from lab-settings.psd1, falling back to a built-in default.
+    .DESCRIPTION
+        The bootstrap deliberately preserves a lab-settings.psd1 you have edited, which
+        means a settings file written before a new key existed will not have that key.
+        Scripts must therefore never assume a key is present: an absent key silently
+        becomes '' or $false, which is how "Requested object [] not found" happens.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowNull()]$Config,
+        [Parameter(Mandatory)][string]$Key,
+        $Default = $null
+    )
+    if ($Config -and $Config.ContainsKey($Key)) {
+        $v = $Config[$Key]
+        if ($null -ne $v -and "$v" -ne '') { return $v }
+    }
+    return $Default
+}
+
 function Start-CPLog {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path)
@@ -549,7 +572,9 @@ function Wait-CPManagementReady {
                 # The watchdog being up is not the same as the management server being usable.
                 # After a management FTW, CPM sits in "during initialization" for several
                 # minutes with the API stopped, so read the real state rather than assuming.
-                $api = Invoke-CPBash -Session $Session -Command 'api status 2>&1 | head -30' -TimeoutSec 300 -Quiet
+                # Not 'head -30': the readiness verdict is the LAST thing api status prints,
+                # after the settings, process, port and profile sections, so a head cut it off.
+                $api = Invoke-CPBash -Session $Session -Command "api status 2>&1 | egrep -i 'readiness|Overall API Status|during initialization|may not be run|^\s*(API|CPM|FWM)\s' " -TimeoutSec 300 -Quiet
                 $a = $api.Output
 
                 if ($a -match '(?i)may not be run before First-Time-Wizard') {

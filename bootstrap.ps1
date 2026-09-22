@@ -80,7 +80,27 @@ function Get-Repo {
     if (-not (Test-Path -LiteralPath $Dest)) { New-Item -ItemType Directory -Path $Dest -Force | Out-Null }
     Copy-Item -Path (Join-Path $src.FullName '*') -Destination $Dest -Recurse -Force
 
-    if ($saved) { Set-Content -LiteralPath $settings -Value $saved -Encoding UTF8 }
+    if ($saved) {
+        # Keep the user's edits, but the repo may have added keys since it was written.
+        # Silently restoring an older file is how a new setting arrives as '' or $false.
+        $fresh = Get-Content -LiteralPath $settings -Raw
+        Set-Content -LiteralPath $settings -Value $saved -Encoding UTF8
+
+        $freshKeys = [regex]::Matches($fresh, '(?m)^\s*([A-Za-z0-9_]+)\s*=') | ForEach-Object { $_.Groups[1].Value }
+        $savedKeys = [regex]::Matches($saved, '(?m)^\s*([A-Za-z0-9_]+)\s*=') | ForEach-Object { $_.Groups[1].Value }
+        $missing = $freshKeys | Where-Object { $_ -notin $savedKeys }
+
+        if ($missing) {
+            $newPath = "$settings.new"
+            Set-Content -LiteralPath $newPath -Value $fresh -Encoding UTF8
+            Write-Host ''
+            Write-Bad  "Your lab-settings.psd1 is missing $($missing.Count) setting(s) added since you last edited it:"
+            foreach ($m in $missing) { Write-Bad "      $m" }
+            Write-Note "The current template has been written alongside it as lab-settings.psd1.new"
+            Write-Note 'Copy the missing lines across, or delete lab-settings.psd1 and re-run this bootstrap.'
+            Write-Host ''
+        }
+    }
 
     # Clear the mark-of-the-web the zip leaves behind, or PowerShell blocks every script.
     try { Get-ChildItem -Path $Dest -Recurse -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue } catch { }

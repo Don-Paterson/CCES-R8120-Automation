@@ -48,13 +48,25 @@ $root = Split-Path -Parent $PSScriptRoot
 
 if (-not $SettingsPath) { $SettingsPath = Join-Path $root 'config\lab-settings.psd1' }
 $cfg = Import-PowerShellDataFile -LiteralPath $SettingsPath
-if (-not $TargetIp)     { $TargetIp = $cfg.AEpmIp }
-if (-not $GaiaUser)     { $GaiaUser = $cfg.GaiaUser }
-if (-not $GaiaPassword) { $GaiaPassword = $cfg.GaiaPassword }
-if (-not $ObjectName)   { $ObjectName = $cfg.AEpmObjectName }
-if (-not $NatIpv4)      { $NatIpv4 = $cfg.AEpmNatIp }
+# Never read $cfg.<key> directly - a settings file written before a key existed simply
+# does not have it, and an empty object name reaches the API as "object [] not found".
+if (-not $TargetIp)     { $TargetIp     = Get-CPSetting $cfg 'AEpmIp'         '10.1.1.103' }
+if (-not $GaiaUser)     { $GaiaUser     = Get-CPSetting $cfg 'GaiaUser'       'admin' }
+if (-not $GaiaPassword) { $GaiaPassword = Get-CPSetting $cfg 'GaiaPassword'   'Chkp!234' }
+if (-not $ObjectName)   { $ObjectName   = Get-CPSetting $cfg 'AEpmObjectName' 'A-EPM' }
+if (-not $NatIpv4)      { $NatIpv4      = Get-CPSetting $cfg 'AEpmNatIp'      '203.0.113.103' }
 
-Start-CPLog (Join-Path $cfg.LogPath ('A-EPM-Endpoint_{0:yyyyMMdd-HHmmss}.log' -f (Get-Date)))
+$bladeEndpoint    = [bool](Get-CPSetting $cfg 'EnableEndpointPolicy'        $true)
+$bladeSeServer    = [bool](Get-CPSetting $cfg 'EnableSmartEventServer'      $false)
+$bladeSeCorrelate = [bool](Get-CPSetting $cfg 'EnableSmartEventCorrelation' $true)
+$bladeLogging     = [bool](Get-CPSetting $cfg 'EnableLoggingAndStatus'      $true)
+
+if (-not $cfg.ContainsKey('AEpmObjectName')) {
+    Write-CPLog 'Your lab-settings.psd1 predates the Task 2A-2 settings - using built-in defaults.' WARN
+    Write-CPLog 'Delete it and re-run the bootstrap to pick up the current template.' WARN
+}
+
+Start-CPLog (Join-Path (Get-CPSetting $cfg 'LogPath' 'C:\CCES-Automation-Logs') ('A-EPM-Endpoint_{0:yyyyMMdd-HHmmss}.log' -f (Get-Date)))
 Write-CPLog "CCES R81.20 - configuring the $ObjectName management object (Task 2A-2)" STEP
 
 $xport = Get-CPTransport -Prefer $Transport -AllowInstall
@@ -77,10 +89,10 @@ try {
     $ok = Set-CPEndpointManagement -Session $session `
             -ObjectName $ObjectName `
             -NatIpv4 $NatIpv4 `
-            -EndpointPolicy        ([bool]$cfg.EnableEndpointPolicy) `
-            -SmartEventServer      ([bool]$cfg.EnableSmartEventServer) `
-            -SmartEventCorrelation ([bool]$cfg.EnableSmartEventCorrelation) `
-            -LoggingAndStatus      ([bool]$cfg.EnableLoggingAndStatus) `
+            -EndpointPolicy        $bladeEndpoint `
+            -SmartEventServer      $bladeSeServer `
+            -SmartEventCorrelation $bladeSeCorrelate `
+            -LoggingAndStatus      $bladeLogging `
             -SkipNat:$SkipNat
 
     if (-not $ok) { throw 'The management object was not configured. See the output above.' }
