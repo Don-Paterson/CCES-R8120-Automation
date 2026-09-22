@@ -457,8 +457,10 @@ function Copy-CPFileToHost {
 
     if ($Session.Transport.Name -eq 'Plink' -and $Session.Transport.Pscp) {
         $pargs = @('-batch', '-scp', '-pw', $Session.Password, $LocalPath, "$($Session.UserName)@$($Session.HostName):$RemoteDir/")
-        & $Session.Transport.Pscp @pargs
-        if ($LASTEXITCODE -ne 0) { throw "pscp failed with exit code $LASTEXITCODE" }
+        # Capture pscp's progress output - left loose it becomes part of this function's
+        # return value, and the caller ends up interpolating a progress bar into a command.
+        $pscpOut = (& $Session.Transport.Pscp @pargs 2>&1 | Out-String)
+        if ($LASTEXITCODE -ne 0) { throw "pscp failed with exit code ${LASTEXITCODE}: $pscpOut" }
     } else {
         if ($Session.Transport.Name -eq 'Plink') {
             Write-CPLog 'pscp.exe not found - falling back to Posh-SSH for this copy.' WARN
@@ -466,7 +468,7 @@ function Copy-CPFileToHost {
         }
         $sec = ConvertTo-SecureString $Session.Password -AsPlainText -Force
         $cred = New-Object System.Management.Automation.PSCredential ($Session.UserName, $sec)
-        Set-SCPItem -ComputerName $Session.HostName -Credential $cred -Path $LocalPath -Destination $RemoteDir -AcceptKey -Force -ErrorAction Stop
+        $null = Set-SCPItem -ComputerName $Session.HostName -Credential $cred -Path $LocalPath -Destination $RemoteDir -AcceptKey -Force -ErrorAction Stop
     }
 
     $sw.Stop()
@@ -474,7 +476,7 @@ function Copy-CPFileToHost {
     $got = ($chk.Output -replace '\D', '')
     if ($got -ne "$size") { throw "Copy of $name looks wrong: local $size bytes, remote '$got' bytes." }
     Write-CPLog ("Copied {0} in {1:N0}s." -f $name, $sw.Elapsed.TotalSeconds) OK
-    return $remote
+    return [string]$remote
 }
 
 #endregion file transfer -----------------------------------------------------
@@ -587,8 +589,8 @@ function Install-CPLicense {
         [Parameter(Mandatory)][string]$LocalLicensePath
     )
     $remote = Copy-CPFileToHost -Session $Session -LocalPath $LocalLicensePath -RemoteDir '/var/log'
-    Write-CPLog 'Installing the licence (cplic put -l)...' STEP
-    $r = Invoke-CPBash -Session $Session -Command "cplic put -l $remote" -TimeoutSec 300
+    Write-CPLog "Installing the licence from $remote (cplic put -l)..." STEP
+    $r = Invoke-CPBash -Session $Session -Command "cplic put -l '$remote'" -TimeoutSec 300
 
     if ($r.Output -match 'Usage|failed|Failed|error occurred') {
         Write-CPLog 'cplic put -l did not work - trying line by line.' WARN
@@ -596,6 +598,7 @@ function Install-CPLicense {
             $t = $line.Trim()
             if (-not $t -or $t.StartsWith('#')) { continue }
             $t = $t -replace '^cplic\s+(put|putlic)\s+', ''
+            $t = $t -replace '^LICENSE\s+', ''
             $null = Invoke-CPBash -Session $Session -Command "cplic put $t" -TimeoutSec 300
         }
     }
@@ -617,8 +620,8 @@ function Install-CPServiceContract {
         [Parameter(Mandatory)][string]$LocalContractPath
     )
     $remote = Copy-CPFileToHost -Session $Session -LocalPath $LocalContractPath -RemoteDir '/var/log'
-    Write-CPLog 'Installing the service contract (cplic contract put -o)...' STEP
-    $r = Invoke-CPBash -Session $Session -Command "cplic contract put -o $remote" -TimeoutSec 300
+    Write-CPLog "Installing the service contract from $remote (cplic contract put -o)..." STEP
+    $r = Invoke-CPBash -Session $Session -Command "cplic contract put -o '$remote'" -TimeoutSec 300
     if ($r.Output -match '(?i)error|failed|usage') {
         Write-CPLog 'The service contract did not install cleanly - install it by hand in SmartConsole if CPUSE complains.' WARN
         return $false
