@@ -61,6 +61,12 @@ $bundlePath = Join-Path $ToolsPath $BundleFile
 if (-not (Test-Path -LiteralPath $bundlePath)) { throw "Jumbo bundle not found: $bundlePath" }
 $bundleMb = [math]::Round((Get-Item -LiteralPath $bundlePath).Length / 1MB)
 
+# The take number is the completion signal, so pull it out of the bundle name.
+$expectedTake = 0
+if ($BundleFile -match '(?i)_T(\d{1,3})[._]') { $expectedTake = [int]$Matches[1] }
+elseif ($BundleFile -match '(?i)Take[_-]?(\d{1,3})') { $expectedTake = [int]$Matches[1] }
+if ($expectedTake -le 0) { Write-CPLog "Could not read a take number from '$BundleFile' - completion will not be verifiable." WARN }
+
 Start-CPLog (Join-Path $cfg.LogPath ('JumboT26_{0}_{1:yyyyMMdd-HHmmss}.log' -f $Target, (Get-Date)))
 Write-CPLog "Installing Jumbo Take 26 on $Target ($targetIp) from $BundleFile (${bundleMb} MB)" STEP
 
@@ -73,10 +79,11 @@ try {
     }
 
     # ------------------------------------------------------------ pre-flight --
-    $before = Get-CPInstalledTake -Session $session
-    if ($before -match '(?i)JUMBO.*\bTake[:\s]+26\b' -or $before -match '(?i)Take[:\s]+26\b') {
-        Write-CPLog 'Take 26 already looks installed on this machine.' WARN
-        Write-CPLog 'Re-run with -Force is not supported; remove the hotfix in CPUSE first if you really want to reinstall.' INFO
+    $before = Get-CPJumboTake -Session $session
+    Write-CPLog "Jumbo take currently installed: $(if ($before) { $before } else { 'none' })" INFO
+    if ($expectedTake -gt 0 -and $before -ge $expectedTake) {
+        Write-CPLog "Take $before is already installed - nothing to do." OK
+        Write-CPLog 'Remove the hotfix in CPUSE first if you really want to reinstall.' INFO
         return
     }
 
@@ -114,13 +121,17 @@ try {
     }
 
     # -------------------------------------------------------------- install --
-    $null = Install-CPUSEPackage -Session $session -RemotePackagePath $remote -MatchPattern 'JUMBO|Jumbo|Take_26|T26' -InstallTimeoutMin $InstallTimeoutMin -SkipVerify:$SkipVerify
+    $installed = Install-CPUSEPackage -Session $session -RemotePackagePath $remote `
+                    -MatchPattern 'JUMBO|Jumbo|Take_26|T26' `
+                    -InstallTimeoutMin $InstallTimeoutMin -ExpectedTake $expectedTake -SkipVerify:$SkipVerify
+    if (-not $installed) { Write-CPLog 'The Jumbo install could not be confirmed - see above.' WARN }
 
     if (-not (Wait-CPManagementReady -Session $session -TimeoutSec 2400)) {
         Write-CPLog 'Services did not all come back - check cpwd_admin list on the box.' WARN
     }
 
     $after = Get-CPInstalledTake -Session $session
+    Write-CPLog "Jumbo take now installed: $(Get-CPJumboTake -Session $session)" OK
     Write-CPLog '' INFO
     Write-CPLog '======================= installed version =======================' OK
     foreach ($l in ($after -split "`n")) { if ($l.Trim()) { Write-CPLog "    $l" INFO } }

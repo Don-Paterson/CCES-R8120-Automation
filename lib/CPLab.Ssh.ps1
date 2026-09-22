@@ -777,6 +777,7 @@ function Install-CPUSEPackage {
         [string]$MatchPattern = 'JUMBO',
         [int]$ImportTimeoutMin = 45,
         [int]$InstallTimeoutMin = 90,
+        [int]$ExpectedTake = 0,
         [switch]$SkipVerify
     )
 
@@ -830,37 +831,82 @@ function Install-CPUSEPackage {
     $null = Invoke-CPBash -Session $Session -Command "nohup clish -c `"installer install $id not-interactive`" > $log 2>&1 &" -TimeoutSec 120 -Quiet
 
     $deadline = (Get-Date).AddMinutes($InstallTimeoutMin)
-    $sawReboot = $false
+    $started = Get-Date
+    $done = $false
+
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Seconds 60
+        $mins = [int]((Get-Date) - $started).TotalMinutes
+
         try {
-            $s = Invoke-CPBash -Session $Session -Command "tail -n 3 $log 2>/dev/null; clish -c 'show installer status all' 2>/dev/null | head -20" -TimeoutSec 180 -Quiet
-            foreach ($l in ($s.Output -split "`n")) { if ($l.Trim()) { Write-CPLog "    $l" INFO } }
-            if ($s.Output -match '(?i)installed successfully|installation finished|Operation completed') { Write-CPLog 'CPUSE reports the installation finished.' OK; break }
-            if ($s.Output -match '(?i)failed') { Write-CPLog 'CPUSE reported a failure - see the log above and /var/log/CPda.' ERROR; break }
+            # The authoritative signal: is the take actually on the box? CPUSE's own
+            # status output repeats "Initiating install..." indefinitely, including after
+            # the post-install reboot, so it can never be used to detect completion.
+            if ($ExpectedTake -gt 0) {
+                $take = Get-CPJumboTake -Session $Session
+                if ($take -ge $ExpectedTake) {
+                    Write-CPLog "Take $take is installed - the Jumbo went on successfully (${mins}m)." OK
+                    $done = $true
+                    break
+                }
+            }
+
+            $s2 = Invoke-CPBash -Session $Session -Command "tail -n 3 $log 2>/dev/null" -TimeoutSec 180 -Quiet
+            if ($s2.Output -match '(?i)failed|error') {
+                Write-CPLog "CPUSE reported a problem after ${mins}m:" WARN
+                foreach ($l in ($s2.Output -split "`n")) { if ($l.Trim()) { Write-CPLog "    $l" WARN } }
+            } else {
+                Write-CPLog "Installing - ${mins}m elapsed..." INFO
+            }
         } catch {
-            Write-CPLog 'Lost the connection - the host is most likely rebooting after the install.' WARN
-            $sawReboot = $true
+            Write-CPLog "Lost the connection after ${mins}m - the host is rebooting after the install." WARN
             $null = Wait-CPReboot -HostName $Session.HostName -DownTimeoutSec 600 -UpTimeoutSec 2400
             try {
                 Disconnect-CPHost -Session $Session
                 $fresh = Connect-CPHost -HostName $Session.HostName -UserName $Session.UserName -Password $Session.Password -Transport $Session.Transport
                 $Session.SessionId = $fresh.SessionId; $Session.Shell = $fresh.Shell
             } catch { }
-            break
         }
     }
 
-    if (-not $sawReboot) {
-        Write-CPLog 'Waiting for the post-install reboot (if the package asks for one)...' STEP
-        $null = Wait-CPReboot -HostName $Session.HostName -DownTimeoutSec 420 -UpTimeoutSec 2400
-        try {
-            Disconnect-CPHost -Session $Session
-            $fresh = Connect-CPHost -HostName $Session.HostName -UserName $Session.UserName -Password $Session.Password -Transport $Session.Transport
-            $Session.SessionId = $fresh.SessionId; $Session.Shell = $fresh.Shell
-        } catch { }
+    if (-not $done) {
+        if ($ExpectedTake -gt 0) {
+            $take = Get-CPJumboTake -Session $Session
+            if ($take -ge $ExpectedTake) {
+                Write-CPLog "Take $take is installed." OK
+                $done = $true
+            } else {
+                Write-CPLog "Gave up after $InstallTimeoutMin minutes - the box reports take $take, expected $ExpectedTake." ERROR
+                Write-CPLog "Check on the host with: cpinfo -y fw1 | grep JUMBO   and /var/log/CPda" INFO
+            }
+        } else {
+            Write-CPLog 'Install window elapsed - no expected take was given, so completion could not be confirmed.' WARN
+        }
     }
-    return $true
+
+    return $done
+}
+
+function Get-CPJumboTake {
+    <#
+    .SYNOPSIS
+        Returns the installed R81.20 main Jumbo Hotfix Accumulator take, or 0 if none.
+    .DESCRIPTION
+        'cpinfo -y fw1' reports it as: HOTFIX_R81_20_JUMBO_HF_MAIN    Take: 26
+        This is the only reliable completion signal for a CPUSE Jumbo install - the
+        installer's own status output keeps narrating "Initiating install..." long after
+        the work is finished and the host has rebooted.
+
+        Other HOTFIX_*_AUTOUPDATE lines carry their own Takes, so the match is anchored
+        to JUMBO_HF_MAIN.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][object]$Session)
+    try {
+        $r = Invoke-CPBash -Session $Session -Command "cpinfo -y fw1 2>/dev/null | grep -i 'JUMBO_HF_MAIN'" -TimeoutSec 240 -Quiet
+        if ($r.Output -match '(?i)JUMBO_HF_MAIN\s*Take:\s*(\d+)') { return [int]$Matches[1] }
+    } catch { }
+    return 0
 }
 
 function Get-CPInstalledTake {
