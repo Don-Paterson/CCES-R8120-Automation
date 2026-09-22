@@ -543,7 +543,26 @@ function Wait-CPManagementReady {
             $running = $lines | Where-Object { $_ -match '\bE\b' }
             if ($lines.Count -gt 0 -and $running.Count -ge $lines.Count) {
                 Write-CPLog "Management services are up ($($lines.Count) watchdog entries in state E)." OK
-                return $true
+
+                # The watchdog being up is not the same as the management server being usable.
+                # After a management FTW, CPM sits in "during initialization" for several
+                # minutes with the API stopped, so read the real state rather than assuming.
+                $api = Invoke-CPBash -Session $Session -Command 'api status 2>&1 | head -30' -TimeoutSec 300 -Quiet
+                $a = $api.Output
+
+                if ($a -match '(?i)may not be run before First-Time-Wizard') {
+                    Write-CPLog 'Wizard has not finished yet - waiting.' INFO
+                } elseif ($a -match '(?i)API readiness test SUCCESSFUL') {
+                    Write-CPLog 'Management API is up and ready to receive connections.' OK
+                    return $true
+                } elseif ($a -match '(?i)during initialization' -or $a -match '(?im)^\s*CPM\s+Starting') {
+                    Write-CPLog 'CPM is still initialising (normal for a few minutes after the wizard)...' INFO
+                } elseif ($a -match '(?i)API readiness test FAILED' -or $a -match '(?i)API Server Is Not Running') {
+                    Write-CPLog 'Management API is not up yet...' INFO
+                } else {
+                    Write-CPLog 'Could not read api status - falling back to the watchdog verdict.' WARN
+                    return $true
+                }
             }
             Write-CPLog "Not ready yet ($($running.Count)/$($lines.Count) processes up)..." INFO
         } catch {
