@@ -19,6 +19,10 @@ ipstat_v4=manually
 ipaddr_v4="10.1.1.103"
 masklen_v4="24"
 default_gw_v4="10.1.1.1"
+
+# R81.20 config_system requires the IPv6 interface state even when IPv6 is off.
+# Without it: "Validating configuration file: Failed / Missing parameter: IPV6 stat"
+ipstat_v6="off"
 hostname="A-EPM"
 domainname="alpha.cp"
 timezone="Europe/London"
