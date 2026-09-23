@@ -936,15 +936,47 @@ function Install-CPUSEPackage {
 
     Write-CPLog "Installing package $id - allow up to $InstallTimeoutMin minutes; the host will reboot." STEP
     $log = '/var/log/cces_cpuse_install.log'
-    $null = Invoke-CPBash -Session $Session -Command "nohup clish -c `"installer install '$id' not-interactive`" > $log 2>&1 &" -TimeoutSec 120 -Quiet
+
+    # installer install needs the Gaia config database lock. Any other Clish session -
+    # a terminal left at a prompt, or a stale one - owns it, and the install dies at once
+    # with CLINFR0771 having done nothing. 'lock database override' takes it, but only for
+    # the session that runs it, so it has to be in the SAME Clish session as the install.
+    # A 'clish -c' one-liner cannot do that; a Clish script file can.
+    $clishScript = "lock database override`ninstaller install `"$id`" not-interactive`n"
+    $null = New-CPRemoteTextFile -Session $Session -RemotePath '/home/admin/cces_cpuse_install.clish' -Content $clishScript
+
+    $null = Invoke-CPBash -Session $Session -Command "rm -f $log; nohup clish -f /home/admin/cces_cpuse_install.clish > $log 2>&1 & echo LAUNCHED:\$!" -TimeoutSec 120 -Quiet
+
+    # Fail fast rather than watching a box that is not installing anything.
+    Start-Sleep -Seconds 30
+    $early = Invoke-CPBash -Session $Session -Command "cat $log 2>/dev/null" -TimeoutSec 90 -Quiet
+    if ($early.Output -match 'CLINFR0771|Config lock is owned') {
+        Write-CPLog 'The install was refused: another session owns the Gaia config lock.' ERROR
+        Write-CPLog 'Close any Clish sessions open to this host (PuTTY, MobaXterm, SmartConsole CLI) and re-run.' ERROR
+        return $false
+    }
+    if ($early.Output -match '(?i)failed|error') {
+        Write-CPLog 'CPUSE reported a problem within 30 seconds of starting:' WARN
+        foreach ($l in ($early.Output -split "`n")) { if ($l.Trim()) { Write-CPLog "    $l" WARN } }
+    }
 
     $deadline = (Get-Date).AddMinutes($InstallTimeoutMin)
     $started = Get-Date
     $done = $false
 
+    $lastPoll = Get-Date
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Seconds 60
         $mins = [int]((Get-Date) - $started).TotalMinutes
+
+        # A suspended VM (or a laptop lid) makes the wall clock jump. Say so, and push the
+        # deadline out by the gap, rather than silently spending the budget on a pause.
+        $gap = ((Get-Date) - $lastPoll).TotalMinutes
+        if ($gap -gt 5) {
+            Write-CPLog ("Clock jumped {0:N0} minutes - the machine was suspended. Extending the deadline." -f $gap) WARN
+            $deadline = $deadline.AddMinutes($gap)
+        }
+        $lastPoll = Get-Date
 
         try {
             # The authoritative signal: is the take actually on the box? CPUSE's own
