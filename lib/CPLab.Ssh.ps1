@@ -937,27 +937,44 @@ function Install-CPUSEPackage {
     Write-CPLog "Installing package $id - allow up to $InstallTimeoutMin minutes; the host will reboot." STEP
     $log = '/var/log/cces_cpuse_install.log'
 
-    # installer install needs the Gaia config database lock. Any other Clish session -
-    # a terminal left at a prompt, or a stale one - owns it, and the install dies at once
-    # with CLINFR0771 having done nothing. 'lock database override' takes it, but only for
-    # the session that runs it, so it has to be in the SAME Clish session as the install.
-    # A 'clish -c' one-liner cannot do that; a Clish script file can.
-    $clishScript = "lock database override`ninstaller install `"$id`" not-interactive`n"
-    $null = New-CPRemoteTextFile -Session $Session -RemotePath '/home/admin/cces_cpuse_install.clish' -Content $clishScript
+    # The Gaia config lock has two failure modes and they need opposite handling:
+    #   CLINFR0771 "Config lock is owned by admin"  -> we need 'lock database override'
+    #   CLICMD0201 "Config lock is already turned on" -> we already hold it, and running
+    #                the override ERRORS, which makes clish -f abort the whole script
+    #                before the install on line 2 ever runs.
+    # So: install on its own first, and only add the override if the box refuses.
+    function Start-CPUSEInstall {
+        param([object]$Sess, [string]$PkgId, [string]$LogPath, [switch]$WithOverride)
+        $lines = @()
+        if ($WithOverride) { $lines += 'lock database override' }
+        $lines += ('installer install "{0}" not-interactive' -f $PkgId)
+        $null = New-CPRemoteTextFile -Session $Sess -RemotePath '/home/admin/cces_cpuse_install.clish' -Content (($lines -join "`n") + "`n")
+        $null = Invoke-CPBash -Session $Sess -Command "rm -f $LogPath; nohup clish -f /home/admin/cces_cpuse_install.clish > $LogPath 2>&1 &" -TimeoutSec 120 -Quiet
+        Start-Sleep -Seconds 30
+        return (Invoke-CPBash -Session $Sess -Command "cat $LogPath 2>/dev/null" -TimeoutSec 90 -Quiet).Output
+    }
 
-    $null = Invoke-CPBash -Session $Session -Command "rm -f $log; nohup clish -f /home/admin/cces_cpuse_install.clish > $log 2>&1 & echo LAUNCHED:\$!" -TimeoutSec 120 -Quiet
+    $out = Start-CPUSEInstall -Sess $Session -PkgId $id -LogPath $log
+    if ($out -match 'CLINFR0771|Config lock is owned') {
+        Write-CPLog 'Another session owns the config lock - retrying with an override.' WARN
+        $out = Start-CPUSEInstall -Sess $Session -PkgId $id -LogPath $log -WithOverride
+    }
 
-    # Fail fast rather than watching a box that is not installing anything.
-    Start-Sleep -Seconds 30
-    $early = Invoke-CPBash -Session $Session -Command "cat $log 2>/dev/null" -TimeoutSec 90 -Quiet
-    if ($early.Output -match 'CLINFR0771|Config lock is owned') {
-        Write-CPLog 'The install was refused: another session owns the Gaia config lock.' ERROR
-        Write-CPLog 'Close any Clish sessions open to this host (PuTTY, MobaXterm, SmartConsole CLI) and re-run.' ERROR
+    if ($out -match 'CLICMD0159|Could not execute all commands') {
+        Write-CPLog 'The Clish script aborted before the install ran:' ERROR
+        foreach ($l in ($out -split "`n")) { if ($l.Trim()) { Write-CPLog "    $l" ERROR } }
         return $false
     }
-    if ($early.Output -match '(?i)failed|error') {
+    if ($out -match 'CLINFR0771|Config lock is owned') {
+        Write-CPLog 'The install is still refused by the config lock, even with an override.' ERROR
+        Write-CPLog 'Check for other sessions: on the host run  who  and  clish -c "show config-lock"' ERROR
+        return $false
+    }
+    if ($out -match '(?i)\bfailed\b|\berror\b') {
         Write-CPLog 'CPUSE reported a problem within 30 seconds of starting:' WARN
-        foreach ($l in ($early.Output -split "`n")) { if ($l.Trim()) { Write-CPLog "    $l" WARN } }
+        foreach ($l in ($out -split "`n")) { if ($l.Trim()) { Write-CPLog "    $l" WARN } }
+    } else {
+        Write-CPLog 'Install started cleanly.' OK
     }
 
     $deadline = (Get-Date).AddMinutes($InstallTimeoutMin)
