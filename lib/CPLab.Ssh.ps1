@@ -891,6 +891,19 @@ function Install-CPUSEPackage {
 
     $id = Get-CPUSEImportedId -Session $Session -MatchPattern $MatchPattern
 
+    # A package identifier containing spaces is UNUSABLE. Clish strips the quotes and
+    # passes only the first token, so 'installer install "R81.20 Jumbo Hotfix Accumulator
+    # Recommended Jumbo Take 26"' becomes an install of a package called "R81.20": CPUSE
+    # prints "Initiating install of R81.20... Done." and does absolutely nothing.
+    # A package we import from a tar is listed by its file name, which has no spaces, so
+    # importing our own copy is the way to get a usable identifier.
+    if ($id -and $id -match '\s') {
+        Write-CPLog "The package in the repository is listed as '$id' - that name contains spaces" WARN
+        Write-CPLog 'and cannot be passed to installer install. Importing our own copy to get a' WARN
+        Write-CPLog 'file-name identifier instead.' WARN
+        $id = $null
+    }
+
     if ($id) {
         Write-CPLog "Package is already in the CPUSE repository (id $id) - skipping the import." OK
     } else {
@@ -920,10 +933,14 @@ function Install-CPUSEPackage {
         }
 
         if (-not $id) {
-            throw "The package never appeared in the CPUSE repository after $ImportTimeoutMin minutes. Check 'show installer status all' and /var/log/CPda on the host."
+            throw "The package never appeared in the CPUSE repository after $ImportTimeoutMin minutes. Check the CPUSE package list on the host."
         }
     }
-    Write-CPLog "Imported package id is $id." OK
+
+    if ($id -match '\s') {
+        throw "CPUSE only offers this package under a name containing spaces ('$id'), which installer install cannot accept. Import the .tar from the Check Point Tools folder so the package carries its file name."
+    }
+    Write-CPLog "Package id is $id." OK
 
     if (-not $SkipVerify) {
         Write-CPLog 'Verifying the package against this machine...' STEP
@@ -973,9 +990,24 @@ function Install-CPUSEPackage {
     if ($out -match '(?i)\bfailed\b|\berror\b') {
         Write-CPLog 'CPUSE reported a problem within 30 seconds of starting:' WARN
         foreach ($l in ($out -split "`n")) { if ($l.Trim()) { Write-CPLog "    $l" WARN } }
-    } else {
-        Write-CPLog 'Install started cleanly.' OK
     }
+
+    # "Initiating install of <name>..." must name the package we asked for. A truncated
+    # name here means the argument was split and CPUSE is installing nothing.
+    if ($out -match '(?im)Initiating install of (.+?)\.\.\.') {
+        $named = $Matches[1].Trim()
+        if ($id -notlike "$named*") {
+            Write-CPLog "CPUSE echoed the package as '$named' but we asked for '$id'." ERROR
+            Write-CPLog 'The argument was split, so nothing will be installed. Aborting.' ERROR
+            return $false
+        }
+        Write-CPLog "CPUSE is installing '$named'." OK
+    }
+    if ($out -match '(?im)^\s*Done\.\s*$' -and $out -notmatch '(?i)in progress|installing') {
+        Write-CPLog "CPUSE returned 'Done.' immediately - that means it found nothing to install." ERROR
+        return $false
+    }
+    Write-CPLog 'Install started cleanly.' OK
 
     $deadline = (Get-Date).AddMinutes($InstallTimeoutMin)
     $started = Get-Date
