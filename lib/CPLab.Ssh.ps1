@@ -806,7 +806,8 @@ function Get-CPUSEImportedId {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][object]$Session,
-        [Parameter(Mandatory)][string]$MatchPattern
+        [Parameter(Mandatory)][string]$MatchPattern,
+        [switch]$SpaceFreeOnly
     )
 
     function Select-CPUSELine {
@@ -822,7 +823,7 @@ function Get-CPUSEImportedId {
             downloaded from the cloud is listed by its catalogue display name, spaces and
             all. Some builds add a leading Num column instead. Handle all three.
         #>
-        param([string]$Text, [string]$Pattern, [switch]$RequireImported)
+        param([string]$Text, [string]$Pattern, [switch]$RequireImported, [switch]$NoSpaces)
         if (-not $Text) { return $null }
 
         foreach ($line in ($Text -split "`n")) {
@@ -844,8 +845,12 @@ function Get-CPUSEImportedId {
             }
 
             # An indexed listing: the number is the argument installer install wants.
-            if ($name -match '^(\d+)$' -and $parts.Count -gt 1) { return $parts[1].Trim() }
-            if ($name -match '^(\d+)\s+(.+)$') { return $Matches[2].Trim() }
+            if ($name -match '^(\d+)$' -and $parts.Count -gt 1) { $name = $parts[1].Trim() }
+            elseif ($name -match '^(\d+)\s+(.+)$') { $name = $Matches[2].Trim() }
+
+            # A name with spaces cannot be passed to installer install - Clish splits it.
+            # Keep looking; our own imported tar will be listed under its file name.
+            if ($NoSpaces -and $name -match '\s') { continue }
 
             return $name
         }
@@ -861,13 +866,13 @@ function Get-CPUSEImportedId {
     # 1. the dedicated imported list, where everything shown is by definition imported
     $list = Invoke-CPClish -Session $Session -Command 'show installer packages imported' -TimeoutSec 300 -Quiet
     if ($list.Output -and $list.Output -notmatch '(?i)no packages to display') {
-        $hit = Select-CPUSELine -Text $list.Output -Pattern $MatchPattern
+        $hit = Select-CPUSELine -Text $list.Output -Pattern $MatchPattern -NoSpaces:$SpaceFreeOnly
         if ($hit) { return $hit }
     }
 
     # 2. the full list, restricted to rows actually marked Imported
     $all = Invoke-CPClish -Session $Session -Command 'show installer packages' -TimeoutSec 300 -Quiet
-    return (Select-CPUSELine -Text $all.Output -Pattern $MatchPattern -RequireImported)
+    return (Select-CPUSELine -Text $all.Output -Pattern $MatchPattern -RequireImported -NoSpaces:$SpaceFreeOnly)
 }
 
 function Install-CPUSEPackage {
@@ -889,7 +894,7 @@ function Install-CPUSEPackage {
         [switch]$SkipVerify
     )
 
-    $id = Get-CPUSEImportedId -Session $Session -MatchPattern $MatchPattern
+    $id = Get-CPUSEImportedId -Session $Session -MatchPattern $MatchPattern -SpaceFreeOnly
 
     # A package identifier containing spaces is UNUSABLE. Clish strips the quotes and
     # passes only the first token, so 'installer install "R81.20 Jumbo Hotfix Accumulator
@@ -920,7 +925,10 @@ function Install-CPUSEPackage {
 
         while (-not $id -and (Get-Date) -lt $deadline) {
             Start-Sleep -Seconds 30
-            $id = Get-CPUSEImportedId -Session $Session -MatchPattern $MatchPattern
+            # -SpaceFreeOnly matters here: the cloud-downloaded package is still listed
+            # under its spaced display name, and without this the loop would "find" that
+            # immediately and think our import had finished.
+            $id = Get-CPUSEImportedId -Session $Session -MatchPattern $MatchPattern -SpaceFreeOnly
             if ($id) { break }
 
             $mins = [int]((Get-Date) - $started).TotalMinutes

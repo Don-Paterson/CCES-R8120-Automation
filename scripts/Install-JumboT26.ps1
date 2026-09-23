@@ -117,7 +117,7 @@ try {
     # CPUSE downloads the recommended Jumbo from the cloud by itself when the box has
     # internet, so the package may already be on the machine. Check before spending 80
     # seconds pushing 2 GB across and several more minutes importing it.
-    $already = Get-CPUSEImportedId -Session $session -MatchPattern 'JUMBO|Jumbo|Take_26|T26'
+    $already = Get-CPUSEImportedId -Session $session -MatchPattern 'JUMBO|Jumbo|Take_26|T26' -SpaceFreeOnly
     # Only a space-free identifier is usable - see the note in Install-CPUSEPackage.
     if ($already -and $already -match '\s') {
         Write-CPLog "CPUSE holds '$already', but that name has spaces and cannot be installed." WARN
