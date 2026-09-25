@@ -32,7 +32,17 @@ class ClishShell:
         self.ch = client.invoke_shell(term="vt100", width=250, height=200)
         self.ch.settimeout(0.5)
         self.echo = echo
-        self.read_until_prompt(30)
+        out = self.read_until_prompt(30)
+        # If admin's shell is /bin/bash (we switch it for SFTP and config_system), the session
+        # opens at [Expert@host:0]# - where 'lock database override' is "command not found"
+        # and Tab lists files. Enter Clish first. (Seen on A-EPM, 25 Sep 2026.)
+        lines = [l for l in out.split("\n") if l.strip()]
+        if lines and EXPERT_PROMPT.search(lines[-1]):
+            self.send("clish\r")
+            self.read_until_prompt(30)
+            self.entered_clish = True
+        else:
+            self.entered_clish = False
 
     # -- low level ------------------------------------------------------------
     def recv(self):

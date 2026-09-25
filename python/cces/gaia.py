@@ -149,6 +149,21 @@ class Gaia:
             self.exec("save config", 60, True)
         return r
 
+    def clish_locked(self, command, timeout=600, save=True):
+        """A Clish command that needs the config lock, in ONE interactive session:
+        lock database override -> command -> save config. The lock is per session, so a
+        separate exec-channel command after an override would still be refused
+        (CLINFR0771 'Config lock is owned by admin')."""
+        sh = self.interactive()
+        try:
+            sh.lock_override()
+            out = sh.run(command, timeout)
+            if save:
+                sh.run("save config", 60)
+            return out
+        finally:
+            sh.close()
+
     def bash(self, command, timeout=600, quiet=False):
         """A shell (Expert-equivalent) command. Switches admin's shell first if needed."""
         if self.shell != "bash" and not self.ensure_bash():
@@ -238,7 +253,9 @@ class Gaia:
 
     def restore_clish(self):
         log.step(f"Restoring {self.user} shell to Gaia Clish on {self.host}...")
-        self.bash(f'clish -s -c "set user {self.user} shell /etc/cli.sh"', 60, True)
+        r = self.bash(f'clish -s -c "set user {self.user} shell /etc/cli.sh"', 60, True)
+        if re.search(r"CLINFR0771|CLINFR0519|lock", r.output):
+            self.clish_locked(f"set user {self.user} shell /etc/cli.sh", 60)
         self.shell = "clish"
 
     # --------------------------------------------------------------- files --

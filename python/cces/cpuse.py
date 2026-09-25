@@ -205,58 +205,81 @@ def install(g, take, timeout_min=90):
 
 
 def da_build(g):
+    """Installed Deployment Agent build, as CPUSE and the Gaia Portal show it
+    ('show installer status' -> 'Build number: 2806 (...)'). The registry value
+    (cpprod_util DeploymentAgent BuildNumber) is only a fallback: straight after an agent
+    install it has been seen to read 771 for a 2337/2806 agent."""
+    for _ in range(3):
+        try:
+            b, _txt = da_status(g)
+            if b >= 1000:
+                return b
+        except Exception:
+            pass
+        time.sleep(10)                    # the agent restarts after an install
     r = g.bash('cpprod_util CPPROD_GetValue "DeploymentAgent" "BuildNumber" 1 2>/dev/null', 180, True)
-    m = re.search(r"(?m)^\s*(\d{3,6})\s*$", r.output)
-    if m:
-        return int(m.group(1))
-    r = g.clish("show installer status build", timeout=180, quiet=True)
-    m = re.search(r"(\d{4,6})", r.output)
+    m = re.search(r"(?m)^\s*(\d{4,6})\s*$", r.output)
     return int(m.group(1)) if m else 0
 
 
-def da_is_latest(g):
-    """CPUSE's own verdict: 'Build number: 2808 (update status: Latest build is already installed)'."""
+def da_status(g):
+    """(build, verdict text) from 'show installer status'. Seen formats:
+         Build number:       2808 (update status: Latest build is already installed)
+         Build number:       2255 (agent build is up to date)"""
     st = g.clish("show installer status", timeout=180, quiet=True).output
-    m = re.search(r"(?i)build number:\s*(\d+)\s*\(update status:\s*([^)]*)\)", st)
-    if not m:
-        return None, 0, st.strip()
-    return bool(re.search(r"(?i)latest build is already installed", m.group(2))), int(m.group(1)), m.group(2).strip()
+    m = re.search(r"(?i)build number:\s*(\d+)\s*\(([^)]*)\)", st)
+    return (int(m.group(1)), m.group(2).strip()) if m else (0, "")
 
 
-def update_deployment_agent_online(g, wait_min=10):
-    """installer agent update - fetch the LATEST agent from the cloud. CPUSE cancels every
-    verify/install ('Before you continue with CPUSE actions, update to the latest Deployment
-    Agent version') until the agent is the newest build, and a bundled .tgz goes out of date."""
-    latest, build, status = da_is_latest(g)
-    log.info(f"Deployment Agent build {build} - {status}")
-    if latest:
-        log.ok("The Deployment Agent is already the latest build.")
-        return True
-    log.step("Updating the Deployment Agent online (installer agent update)...")
-    g.clish("installer agent update not-interactive", timeout=900)
+def update_deployment_agent_online(g, wait_min=5):
+    """installer agent update. CPUSE's own 'up to date' is only as good as its last cloud
+    check - on 25 Sep it called 2255 up to date while refusing Jumbo work - so this is an
+    extra step on top of the bundled minimum, never the only one."""
+    before = da_build(g)
+    r = g.clish("installer agent update not-interactive", timeout=900, quiet=True)
+    if re.search(r"CLINFR0771|CLINFR0519|config lock", r.output, re.I):
+        out = g.clish_locked("installer agent update not-interactive", 900, save=False)
+        r = type(r)(out, 0)
+    log.block(r.output)
+    if re.search(r"(?i)up to date|already installed", r.output):
+        log.info(f"CPUSE says the agent ({before}) is up to date.")
+        return before
     t0 = time.time()
     while time.time() - t0 < wait_min * 60:
         time.sleep(30)
         try:
-            latest, now, status = da_is_latest(g)
+            now = da_build(g)
         except Exception:
             continue                      # the agent restarts during the update
-        if latest:
-            log.ok(f"Deployment Agent updated online: build {build} -> {now}.")
-            return True
-        log.info(f"Agent build {now} - {status}")
-    log.warn("The online agent update did not report 'Latest build is already installed'.")
-    return False
+        if now > before:
+            log.ok(f"Deployment Agent updated online: {before} -> {now}.")
+            return now
+    return da_build(g)
 
 
 def install_deployment_agent(g, local_path):
-    """Latest agent online first; the bundled package only if the online update fails."""
+    """Make the agent at least the newest bundled build, then try the online update on top.
+    CPUSE cancels every verify/install ('update to the latest Deployment Agent version') on
+    an old agent, and cannot be trusted to know it is old."""
+    import os
+    want = 0
+    m = re.search(r"DeploymentAgent[_-]0*(\d+)", os.path.basename(local_path or ""))
+    if m:
+        want = int(m.group(1))
+    cur = da_build(g)
+    log.info(f"Deployment Agent: installed build {cur}, newest bundled build {want or '?'}.")
+    if want and cur < want:
+        install_deployment_agent_bundled(g, local_path)
     try:
-        if update_deployment_agent_online(g):
-            return True
+        update_deployment_agent_online(g)
     except Exception as e:
-        log.warn(f"Online agent update failed ({e}) - trying the bundled package.")
-    return install_deployment_agent_bundled(g, local_path)
+        log.warn(f"Online agent update failed ({e}).")
+    final = da_build(g)
+    if want and final < want:
+        log.warn(f"Agent is still {final}, below the bundled {want} - CPUSE may cancel Jumbo actions.")
+        return False
+    log.ok(f"Deployment Agent build {final}.")
+    return True
 
 
 def install_deployment_agent_bundled(g, local_path):

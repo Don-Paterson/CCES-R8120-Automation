@@ -218,12 +218,10 @@ def jumbo(s, target="A-EPM", take=None, source=None, skip_license_check=False, k
             lic = g.bash("cplic print -x 2>/dev/null", 180, True).output
             if re.search(r"(?i)no licenses|eval", lic):
                 log.warn("Only an evaluation licence (or none) - CPUSE may refuse the Jumbo. Run the ftw stage first.")
-        # CPUSE refuses every download/verify/install until the agent is the latest build.
-        latest, build, status = cpuse.da_is_latest(g)
-        if latest is False:
-            log.warn(f"Deployment Agent build {build} is not the latest ({status}) - updating it first.")
-            if not cpuse.install_deployment_agent(g, deployment_agent(s)):
-                log.warn("Could not confirm the agent is current - CPUSE may cancel the Jumbo.")
+        # CPUSE refuses every download/verify/install until the agent is current - and cannot
+        # be trusted to say so - so enforce the newest bundled build before any CPUSE action.
+        if g.init_shell_access():
+            cpuse.install_deployment_agent(g, deployment_agent(s))
         if source == "cloud":
             if not cpuse.download(g, take):
                 return False
