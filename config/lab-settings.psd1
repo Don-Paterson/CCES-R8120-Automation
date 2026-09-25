@@ -42,6 +42,12 @@
     DeploymentAgent = 'DeploymentAgent_000002337_1.tgz'
     JumboBundle     = 'Check_Point_R81_20_JUMBO_HF_MAIN_Bundle_T26_FULL.tar'
 
+    # --- Jumbo (Task 2A-3) - used by the Python edition ------------------------
+    # Take to install, and where from: Cloud = CPUSE downloads it (needs the licence
+    # and contract), Local = import JumboBundle from ToolsPath.
+    JumboTake       = 170
+    JumboSource     = 'Cloud'
+
     # --- behaviour -----------------------------------------------------------
     LogPath         = 'C:\CCES-Automation-Logs'
     # Put the admin shell back to Gaia Clish when a script finishes.

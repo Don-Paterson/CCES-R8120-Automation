@@ -30,6 +30,30 @@ Straight to one stage, no menu (parameters need the scriptblock form):
 `Settings` or `DownloadOnly`. If A-GUI has no route to github.com, copy the folder into
 the lab by hand and run the scripts directly - everything below still applies.
 
+## Python edition (beta)
+
+The same stages, rewritten in Python with paramiko (`python\cces`). It drives Gaia the way a
+person does at the keyboard - waiting for each prompt, pressing Tab for CPUSE's numbered package
+list, and answering CPUSE's `([y]es / [n]o / [s]uppress reboot)` question - which is what finally
+made the Jumbo install work (proven with Take 170 on A-SMS, 25 Sep 2026).
+
+```powershell
+# Python menu straight away (installs Python 3.13 + paramiko on A-GUI if missing, ~75 s)
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Don-Paterson/CCES-R8120-Automation/main/bootstrap.ps1))) -Engine Python
+
+# or from the usual menu: option Y
+```
+
+From a prompt on A-GUI: `cd Desktop\CCES-Automation\python; py -3 -m cces full` (stages: `prereqs`,
+`dryrun`, `ftw`, `endpoint`, `jumbo`, `full`, `secondary`, `secondary-jumbo`, `packages`).
+
+Differences from the PowerShell scripts:
+
+* **Jumbo take and source are settings**: `JumboTake` (default 170) and `JumboSource` -
+  `Cloud` (CPUSE downloads it) or `Local` (import `JumboBundle` from the Check Point Tools folder).
+* One transport (paramiko: exec, interactive shell, SFTP with progress) - no plink/pscp/Posh-SSH choice.
+* Reads the same `config\lab-settings.psd1`, writes logs to the same `LogPath` (`cces-<stage>_*.log`).
+
 ## Lab topology (Site Alpha)
 
 ```

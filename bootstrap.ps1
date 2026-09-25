@@ -24,6 +24,11 @@
 
 .PARAMETER Branch
     Branch to pull. Default: main.
+
+.PARAMETER Engine
+    PowerShell (default) runs the scripts\*.ps1 stages. Python runs the same stages from
+    python\cces (paramiko), installing Python 3.13 and paramiko first if they are missing:
+        & ([scriptblock]::Create((irm https://raw.githubusercontent.com/Don-Paterson/CCES-R8120-Automation/main/bootstrap.ps1))) -Engine Python
 #>
 [CmdletBinding()]
 param(
@@ -31,7 +36,9 @@ param(
     [string]$Action = 'Menu',
     [string]$InstallPath,
     [string]$GaiaPassword,
-    [string]$Branch = 'main'
+    [string]$Branch = 'main',
+    [ValidateSet('PowerShell', 'Python')]
+    [string]$Engine = 'PowerShell'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -111,9 +118,58 @@ function Get-Repo {
     return $Dest
 }
 
+# ------------------------------------------------------------------ python ---
+function Test-PythonOK {
+    try {
+        $v = & py -3 --version 2>$null
+        if ($LASTEXITCODE -eq 0 -and $v -match 'Python (\d+)\.(\d+)') {
+            return ([int]$Matches[1] -gt 3 -or ([int]$Matches[1] -eq 3 -and [int]$Matches[2] -ge 11))
+        }
+    } catch { }
+    return $false
+}
+
+function Initialize-Python {
+    <# Python 3.13 + paramiko, the CCAS Python Toolkit way. About 75 s the first time per lab. #>
+    param([string]$Version = '3.13.1')
+    $ProgressPreference = 'SilentlyContinue'
+    if (-not (Test-PythonOK)) {
+        Write-Step "Installing Python $Version (amd64) - about a minute..."
+        $exe = Join-Path $env:TEMP "python-$Version-amd64.exe"
+        Invoke-WebRequest -Uri "https://www.python.org/ftp/python/$Version/python-$Version-amd64.exe" -OutFile $exe -UseBasicParsing
+        Start-Process -FilePath $exe -Wait -NoNewWindow -ArgumentList @(
+            '/quiet', 'InstallAllUsers=1', 'PrependPath=1', 'Include_pip=1', 'Include_test=0', 'Include_launcher=1')
+        Remove-Item $exe -Force -ErrorAction SilentlyContinue
+        $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+        if (-not (Test-PythonOK)) { throw "Python install finished but 'py -3' is still not usable." }
+    }
+    & py -3 -c "import paramiko" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Step 'Installing paramiko...'
+        & py -3 -m pip install --disable-pip-version-check -q 'paramiko==3.5.1'
+        if ($LASTEXITCODE -ne 0) { throw 'pip could not install paramiko.' }
+    }
+    Write-Note "$(& py -3 --version), paramiko $(& py -3 -c 'import paramiko; print(paramiko.__version__)')"
+}
+
+function Invoke-PyStage {
+    <# Runs python\cces: no stage = its own menu. #>
+    param([string]$Root, [string]$Stage)
+    Initialize-Python
+    $map = @{ Prereqs = 'prereqs'; DryRun = 'dryrun'; Ftw = 'ftw'; Endpoint = 'endpoint'; Jumbo = 'jumbo'
+              Full = 'full'; Secondary = 'secondary'; SecondaryJumbo = 'secondary-jumbo' }
+    $pyArgs = @('-3', '-u', '-m', 'cces')
+    if ($Stage) { $pyArgs += $map[$Stage] }
+    $env:PYTHONIOENCODING = 'utf-8'
+    Push-Location (Join-Path $Root 'python')
+    try { & py @pyArgs } finally { Pop-Location }
+}
+
 # ------------------------------------------------------------------ runner ---
 function Invoke-Stage {
     param([string]$Name, [string]$Root, [string]$Pwd)
+
+    if ($Engine -eq 'Python' -and $Name -notin 'Settings', 'DownloadOnly') { Invoke-PyStage -Root $Root -Stage $Name; return }
 
     $s = Join-Path $Root 'scripts'
     $extra = @{}
@@ -168,6 +224,8 @@ function Show-Menu {
         Write-Host '   7   A-EPM-02 - build secondary management server' -ForegroundColor White
         Write-Host '   8   A-EPM-02 - build and install Jumbo Take 26'   -ForegroundColor White
         Write-Host ''
+        Write-Host '   Y   Python edition of this menu (beta) - installs Python + paramiko if needed' -ForegroundColor Yellow
+        Write-Host ''
         Write-Host '   S   Edit lab settings (IPs, passwords, paths)'  -ForegroundColor DarkGray
         Write-Host '   F   Open the folder'                            -ForegroundColor DarkGray
         Write-Host '   Q   Quit'                                       -ForegroundColor DarkGray
@@ -183,13 +241,14 @@ function Show-Menu {
             '6' { Invoke-Stage 'Full'           $Root $Pwd }
             '7' { Invoke-Stage 'Secondary'      $Root $Pwd }
             '8' { Invoke-Stage 'SecondaryJumbo' $Root $Pwd }
+            'Y' { try { Invoke-PyStage -Root $Root -Stage '' } catch { Write-Bad "Python edition failed: $($_.Exception.Message)" } }
             'S' { Invoke-Stage 'Settings'       $Root $Pwd }
             'F' { Start-Process explorer.exe $Root }
             'Q' { return }
             default { Write-Bad 'Not an option.' }
         }
 
-        if ($c.ToUpper() -notin @('Q', 'F', 'S')) {
+        if ($c.ToUpper() -notin @('Q', 'F', 'S', 'Y')) {
             Write-Host ''
             Read-Host '  Press Enter for the menu'
         }
@@ -202,5 +261,6 @@ if (-not $InstallPath) { $InstallPath = Join-Path ([Environment]::GetFolderPath(
 
 $root = Get-Repo -Dest $InstallPath -Br $Branch
 
-if ($Action -eq 'Menu') { Show-Menu -Root $root -Pwd $GaiaPassword }
+if ($Engine -eq 'Python' -and $Action -eq 'Menu') { Invoke-PyStage -Root $root -Stage '' }
+elseif ($Action -eq 'Menu') { Show-Menu -Root $root -Pwd $GaiaPassword }
 else { Invoke-Stage $Action $root $GaiaPassword }
