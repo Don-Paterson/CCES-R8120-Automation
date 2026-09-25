@@ -26,9 +26,10 @@
     Branch to pull. Default: main.
 
 .PARAMETER Engine
-    PowerShell (default) runs the scripts\*.ps1 stages. Python runs the same stages from
-    python\cces (paramiko), installing Python 3.13 and paramiko first if they are missing:
-        & ([scriptblock]::Create((irm https://raw.githubusercontent.com/Don-Paterson/CCES-R8120-Automation/main/bootstrap.ps1))) -Engine Python
+    Python (default since 25 Sep 2026) runs the stages from python\cces (paramiko), installing
+    Python 3.13 and paramiko first if they are missing - proven end to end on A-EPM with Take 170.
+    PowerShell runs the older scripts\*.ps1 stages and menu:
+        & ([scriptblock]::Create((irm https://raw.githubusercontent.com/Don-Paterson/CCES-R8120-Automation/main/bootstrap.ps1))) -Engine PowerShell
 #>
 [CmdletBinding()]
 param(
@@ -38,8 +39,9 @@ param(
     [string]$GaiaPassword,
     [string]$Branch = 'main',
     [ValidateSet('PowerShell', 'Python')]
-    [string]$Engine = 'PowerShell'
+    [string]$Engine = 'Python'
 )
+if (-not $Engine) { $Engine = 'Python' }
 
 $ErrorActionPreference = 'Stop'
 $repo = 'Don-Paterson/CCES-R8120-Automation'
@@ -224,7 +226,7 @@ function Show-Menu {
         Write-Host '   7   A-EPM-02 - build secondary management server' -ForegroundColor White
         Write-Host '   8   A-EPM-02 - build and install Jumbo Take 26'   -ForegroundColor White
         Write-Host ''
-        Write-Host '   Y   Python edition of this menu (beta) - installs Python + paramiko if needed' -ForegroundColor Yellow
+        Write-Host '   Y   Python edition of this menu (the default) - installs Python + paramiko if needed' -ForegroundColor Yellow
         Write-Host ''
         Write-Host '   S   Edit lab settings (IPs, passwords, paths)'  -ForegroundColor DarkGray
         Write-Host '   F   Open the folder'                            -ForegroundColor DarkGray
