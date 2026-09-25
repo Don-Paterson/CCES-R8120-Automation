@@ -232,6 +232,7 @@ def main():
     deadline = t0 + a.timeout_min * 60
     answered = 0
     failed = False
+    ok_result = None
     tail = ""
     session_lost = False
 
@@ -257,12 +258,27 @@ def main():
             sh.send("y\r")
             answered += 1
             tail = ""
-        if re.search(r"(?i)result:.*(fail|error)|installation failed|cannot be installed", tail):
+        # "Result: ... installed successfully. Additional Info: ..." is SUCCESS - the Additional
+        # Info can mention "error" (e.g. SFWR80CMP inspect files, sk116455) without the
+        # package failing. Only a Result line WITHOUT "successfully" counts as a failure.
+        mres = re.search(r"(?i)result:([^\n]*)", tail)
+        if mres:
+            res = mres.group(1)
+            if re.search(r"(?i)installed successfully|was installed", res):
+                ok_result = res.strip()
+            elif re.search(r"(?i)fail|error|cannot|aborted", res):
+                failed = True
+        if re.search(r"(?i)installation failed|cannot be installed", tail):
             failed = True
 
     if failed:
         log("CPUSE reported a failure - see the transcript above.")
         return 5
+    if ok_result:
+        m = re.search(r"(?i)additional info:(.*)", ok_result)
+        log("CPUSE: package installed successfully.")
+        if m:
+            log(f"NOTE from CPUSE (not a failure): {m.group(1).strip()}")
 
     # Follow the reboot and confirm the take.
     log("Watching for the install to complete (and the reboot).")
