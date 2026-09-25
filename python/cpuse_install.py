@@ -44,7 +44,10 @@ except ImportError:
 
 ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][A-Za-z0-9]|\x08")
 PROMPT_AT = re.compile(r"^[\w.\-]+(:\S+)?>( |$)")                      # A-SMS> ...  or  A-EPM:0>
-CONFIRM = re.compile(r"(?i)(\(y-yes,? else no\)|\[y/n\]|\(y/n\)|yes/no|do you want to continue|are you sure)\s*:?\s*$")
+CONFIRM = re.compile(
+    r"(?i)(\[y\]es\s*/\s*\[n\]o[^\n]*"          # Do you want to continue? ([y]es / [n]o / [s]uppress reboot)  <- seen on R81.20 CPUSE
+    r"|\(y-yes,? else no\)|\[y/n\]|\(y/n\)|yes/no"
+    r"|do you want to continue\?[^\n]*|are you sure[^\n]*)\s*:?\s*$")
 ROW = re.compile(r"^\s*(\d+)\s+(.+?)\s{2,}(\S.*?)\s*$")
 
 LOG = None
