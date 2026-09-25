@@ -19,6 +19,10 @@ from . import log
 from .clish import CONFIRM, PROMPT_AT, parse_numbered
 from .gaia import port_open, wait_ssh
 
+# CPUSE messages that end an operation without a "Result:" line.
+REFUSAL = re.compile(r"(?i)(operation cancel+ed[^\n]*|before you continue with cpuse actions[^\n]*"
+                     r"|update to the latest deployment agent[^\n]*|not enough (free )?(disk )?space[^\n]*)")
+
 # Reboot timing (seconds) - module-level so tests can shorten them.
 REBOOT_DOWN_WAIT = 600
 POST_REBOOT_SETTLE = 60
@@ -62,7 +66,7 @@ def run_numbered(g, verb, pattern, timeout_min=90, confirm="y"):
     """installer <verb> <Tab> -> pick the one row matching pattern -> number + Enter ->
     answer the confirmation when shown -> narrate until 'Result:' and the prompt return,
     or the session drops (a reboot). Returns (status, result_text)
-    status: 'ok' | 'failed' | 'session-lost' | 'timeout' | 'not-found' | 'ambiguous'"""
+    status: 'ok' | 'failed' | 'refused' | 'session-lost' | 'timeout' | 'not-found' | 'ambiguous'"""
     rx = re.compile(pattern, re.I) if isinstance(pattern, str) else pattern
     sh = g.interactive()
     try:
@@ -103,6 +107,10 @@ def run_numbered(g, verb, pattern, timeout_min=90, confirm="y"):
                     if l != last_line or time.time() - last_shown > 60:
                         log.info("   | " + l)
                         last_line, last_shown = l, time.time()
+                refusal = REFUSAL.search(tail)
+                if refusal:
+                    log.error(f"CPUSE refused: {refusal.group(0).strip()}")
+                    return "refused", refusal.group(0).strip()
                 if CONFIRM.search(tail.rstrip()) and answered < 3:
                     log.warn(f">>> CPUSE is asking for confirmation - answering '{confirm}'.")
                     sh.send(confirm + "\r")
@@ -165,7 +173,7 @@ def install(g, take, timeout_min=90):
         return True
     t0 = time.time()
     status, res = run_numbered(g, "install", take_pattern(take), timeout_min)
-    if status in ("failed", "not-found", "ambiguous", "timeout"):
+    if status in ("failed", "refused", "not-found", "ambiguous", "timeout"):
         log.error(f"Install did not go through ({status}): {res[-400:]}")
         return False
     log.ok("CPUSE finished the install - the host reboots now." if status == "ok"
@@ -206,7 +214,52 @@ def da_build(g):
     return int(m.group(1)) if m else 0
 
 
+def da_is_latest(g):
+    """CPUSE's own verdict: 'Build number: 2808 (update status: Latest build is already installed)'."""
+    st = g.clish("show installer status", timeout=180, quiet=True).output
+    m = re.search(r"(?i)build number:\s*(\d+)\s*\(update status:\s*([^)]*)\)", st)
+    if not m:
+        return None, 0, st.strip()
+    return bool(re.search(r"(?i)latest build is already installed", m.group(2))), int(m.group(1)), m.group(2).strip()
+
+
+def update_deployment_agent_online(g, wait_min=10):
+    """installer agent update - fetch the LATEST agent from the cloud. CPUSE cancels every
+    verify/install ('Before you continue with CPUSE actions, update to the latest Deployment
+    Agent version') until the agent is the newest build, and a bundled .tgz goes out of date."""
+    latest, build, status = da_is_latest(g)
+    log.info(f"Deployment Agent build {build} - {status}")
+    if latest:
+        log.ok("The Deployment Agent is already the latest build.")
+        return True
+    log.step("Updating the Deployment Agent online (installer agent update)...")
+    g.clish("installer agent update not-interactive", timeout=900)
+    t0 = time.time()
+    while time.time() - t0 < wait_min * 60:
+        time.sleep(30)
+        try:
+            latest, now, status = da_is_latest(g)
+        except Exception:
+            continue                      # the agent restarts during the update
+        if latest:
+            log.ok(f"Deployment Agent updated online: build {build} -> {now}.")
+            return True
+        log.info(f"Agent build {now} - {status}")
+    log.warn("The online agent update did not report 'Latest build is already installed'.")
+    return False
+
+
 def install_deployment_agent(g, local_path):
+    """Latest agent online first; the bundled package only if the online update fails."""
+    try:
+        if update_deployment_agent_online(g):
+            return True
+    except Exception as e:
+        log.warn(f"Online agent update failed ({e}) - trying the bundled package.")
+    return install_deployment_agent_bundled(g, local_path)
+
+
+def install_deployment_agent_bundled(g, local_path):
     import os
     want = 0
     m = re.search(r"DeploymentAgent[_-]0*(\d+)", os.path.basename(local_path))
