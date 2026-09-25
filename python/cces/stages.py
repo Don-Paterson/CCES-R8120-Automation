@@ -33,6 +33,24 @@ def tool(s, key):
     return os.path.join(s.ToolsPath, s[key])
 
 
+def deployment_agent(s):
+    """The newest DeploymentAgent_<build>_*.tgz in the Check Point Tools folder (e.g. 2806 beats
+    2337), or the one named in the settings if none can be listed. CPUSE refuses Jumbo work
+    until the agent is current, so an old name left in the settings must not win."""
+    best, best_build = tool(s, "DeploymentAgent"), -1
+    m = re.search(r"DeploymentAgent[_-]0*(\d+)", os.path.basename(best))
+    if m and os.path.isfile(best):
+        best_build = int(m.group(1))
+    try:
+        for n in os.listdir(s.ToolsPath):
+            m = re.match(r"(?i)DeploymentAgent[_-]0*(\d+).*\.tgz$", n)
+            if m and int(m.group(1)) > best_build:
+                best, best_build = os.path.join(s.ToolsPath, n), int(m.group(1))
+    except OSError:
+        pass
+    return best
+
+
 def find_bundle(s, take):
     """A Jumbo bundle for `take` in the Check Point Tools folder, whatever its exact name:
     Check_Point_R81_20_jumbo_hf_main_Bundle_T170_FULL.tar / .tgz, JUMBO_HF_MAIN_..._T170... etc.
@@ -79,7 +97,7 @@ def prereqs(s, **_):
              ("Answer file A-EPM-02", os.path.join(s._root, "config", "A-EPM-02_ftw.sh")),
              ("Licence A-EPM", tool(s, "LicenseFile")),
              ("Service contract", tool(s, "ContractFile")),
-             ("Deployment Agent", tool(s, "DeploymentAgent"))]
+             ("Deployment Agent (newest in Tools)", deployment_agent(s))]
 
     for name, p in files:
         if os.path.isfile(p):
@@ -149,8 +167,8 @@ def ftw(s, dry_run=False, skip_license=False, skip_contract=False, skip_agent=Fa
             ops.install_contract(g, tool(s, "ContractFile"))
         else:
             log.warn("Skipping the service contract step.")
-        if not skip_agent and os.path.isfile(tool(s, "DeploymentAgent")):
-            cpuse.install_deployment_agent(g, tool(s, "DeploymentAgent"))
+        if not skip_agent and os.path.isfile(deployment_agent(s)):
+            cpuse.install_deployment_agent(g, deployment_agent(s))
         else:
             log.warn("Skipping the Deployment Agent step.")
         if apply_clish:
@@ -204,7 +222,7 @@ def jumbo(s, target="A-EPM", take=None, source=None, skip_license_check=False, k
         latest, build, status = cpuse.da_is_latest(g)
         if latest is False:
             log.warn(f"Deployment Agent build {build} is not the latest ({status}) - updating it first.")
-            if not cpuse.install_deployment_agent(g, tool(s, "DeploymentAgent")):
+            if not cpuse.install_deployment_agent(g, deployment_agent(s)):
                 log.warn("Could not confirm the agent is current - CPUSE may cancel the Jumbo.")
         if source == "cloud":
             if not cpuse.download(g, take):
@@ -276,8 +294,8 @@ def secondary(s, dry_run=False, install_license=False, skip_agent=False, install
             g.bash("cpca_client lscert 2>/dev/null | head -5; cp_conf sic state 2>/dev/null", 180)
         if install_license and os.path.isfile(tool(s, "License02File")):
             ops.install_license(g, tool(s, "License02File"))
-        if not skip_agent and os.path.isfile(tool(s, "DeploymentAgent")):
-            cpuse.install_deployment_agent(g, tool(s, "DeploymentAgent"))
+        if not skip_agent and os.path.isfile(deployment_agent(s)):
+            cpuse.install_deployment_agent(g, deployment_agent(s))
         if not install_jumbo:
             finish(g, s, keep_bash)
     finally:

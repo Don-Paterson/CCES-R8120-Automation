@@ -19,7 +19,7 @@ DEFAULTS = {
     "ToolsPath": r"C:\Users\Admin\Desktop\Check Point Tools",
     "LicenseFile": r"Licenses\A-EPM.lic", "License02File": r"Licenses\A-EPM-02.lic",
     "ContractFile": r"Licenses\ServiceContract.xml",
-    "DeploymentAgent": "DeploymentAgent_000002337_1.tgz",
+    "DeploymentAgent": "DeploymentAgent_000002806_1.tgz",
     "JumboBundle": "Check_Point_R81_20_JUMBO_HF_MAIN_Bundle_T26_FULL.tar",
     "JumboTake": 170,            # which Jumbo the Jumbo stage installs
     "JumboSource": "Auto",       # Auto = a matching bundle in ToolsPath if present, else cloud; Local; Cloud

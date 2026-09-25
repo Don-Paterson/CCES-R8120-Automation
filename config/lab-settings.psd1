@@ -39,7 +39,7 @@
     LicenseFile     = 'Licenses\A-EPM.lic'
     License02File   = 'Licenses\A-EPM-02.lic'
     ContractFile    = 'Licenses\ServiceContract.xml'
-    DeploymentAgent = 'DeploymentAgent_000002337_1.tgz'
+    DeploymentAgent = 'DeploymentAgent_000002806_1.tgz'   # Python edition picks the newest in ToolsPath anyway
     JumboBundle     = 'Check_Point_R81_20_JUMBO_HF_MAIN_Bundle_T26_FULL.tar'
 
     # --- Jumbo (Task 2A-3) - used by the Python edition ------------------------
