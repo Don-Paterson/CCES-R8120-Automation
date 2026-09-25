@@ -23,6 +23,8 @@ from .gaia import port_open, wait_ssh
 REFUSAL = re.compile(r"(?i)(operation cancel+ed[^\n]*|before you continue with cpuse actions[^\n]*"
                      r"|update to the latest deployment agent[^\n]*|not enough (free )?(disk )?space[^\n]*)")
 
+AGENT_REFUSAL = re.compile(r"(?i)latest deployment agent")
+
 # Reboot timing (seconds) - module-level so tests can shorten them.
 REBOOT_DOWN_WAIT = 600
 POST_REBOOT_SETTLE = 60
@@ -166,6 +168,44 @@ def import_local(g, remote_path, take, timeout_min=45):
     return False
 
 
+AGENT_WAIT_MIN = 20
+AGENT_POLL = 30
+
+
+def wait_agent_self_update(g, wait_min=None):
+    """CPUSE refused because the agent is not the latest. Nudge it (check-for-updates +
+    agent update) and poll the build until it goes up. True if it did."""
+    wait_min = AGENT_WAIT_MIN if wait_min is None else wait_min
+    before = da_build(g)
+    log.warn(f"CPUSE wants a newer Deployment Agent than {before} - waiting up to {wait_min} min "
+             "for it to update itself (it does this in the background).")
+    for c in ("installer check-for-updates not-interactive", "installer agent update not-interactive"):
+        try:
+            r = g.clish(c, timeout=900, quiet=True)
+            if re.search(r"CLINFR0771|CLINFR0519|config lock", r.output, re.I):
+                g.clish_locked(c, 900, save=False)
+        except Exception as e:
+            log.dim(f"{c}: {e}")
+    t0 = time.time()
+    last = 0
+    while time.time() - t0 < wait_min * 60:
+        try:
+            now = da_build(g)
+        except Exception:
+            now = 0                       # the agent restarts while it updates
+        if now > before:
+            log.ok(f"Deployment Agent updated itself: {before} -> {now}. Trying the install again.")
+            time.sleep(AGENT_POLL)        # let the new agent settle
+            return True
+        if time.time() - last > 120:
+            log.info(f"    agent still {now or '?'} ({int((time.time() - t0) / 60)}m)...")
+            last = time.time()
+        time.sleep(AGENT_POLL)
+    log.error(f"The Deployment Agent stayed at {before} for {wait_min} min. Update it in the Gaia Portal "
+              "(Upgrades (CPUSE) > Status and Actions > Install DA) and re-run the jumbo stage.")
+    return False
+
+
 def install(g, take, timeout_min=90):
     """Install Jumbo `take` from the numbered list, follow the reboot, confirm."""
     if installed_take(g) >= take:
@@ -173,6 +213,12 @@ def install(g, take, timeout_min=90):
         return True
     t0 = time.time()
     status, res = run_numbered(g, "install", take_pattern(take), timeout_min)
+    if status == "refused" and AGENT_REFUSAL.search(res or ""):
+        # Seen on A-EPM 25 Sep (fresh lab): 'installer agent update' said 2806 was up to date,
+        # the install was refused, and the agent then updated itself to 2808 in the background
+        # a few minutes later. So wait for that, then try once more.
+        if wait_agent_self_update(g):
+            status, res = run_numbered(g, "install", take_pattern(take), timeout_min)
     if status in ("failed", "refused", "not-found", "ambiguous", "timeout"):
         log.error(f"Install did not go through ({status}): {res[-400:]}")
         return False
