@@ -77,7 +77,7 @@ def main(argv=None):
     ap.add_argument("--settings", help="path to lab-settings.psd1")
     ap.add_argument("--target", default="A-EPM", help="jumbo/packages: A-EPM, A-EPM-02, A-SMS or an IP")
     ap.add_argument("--take", type=int, help="jumbo: override JumboTake")
-    ap.add_argument("--source", choices=["cloud", "local"], help="jumbo: override JumboSource")
+    ap.add_argument("--source", choices=["auto", "cloud", "local"], help="jumbo: override JumboSource")
     ap.add_argument("--skip-license", action="store_true")
     ap.add_argument("--skip-contract", action="store_true")
     ap.add_argument("--skip-agent", action="store_true")

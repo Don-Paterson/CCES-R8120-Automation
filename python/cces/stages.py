@@ -33,6 +33,34 @@ def tool(s, key):
     return os.path.join(s.ToolsPath, s[key])
 
 
+def find_bundle(s, take):
+    """A Jumbo bundle for `take` in the Check Point Tools folder, whatever its exact name:
+    Check_Point_R81_20_jumbo_hf_main_Bundle_T170_FULL.tar / .tgz, JUMBO_HF_MAIN_..._T170... etc.
+    JumboBundle from the settings wins if it names this take and exists."""
+    named = tool(s, "JumboBundle")
+    if re.search(rf"(?i)_T{take}[._]", os.path.basename(named)) and os.path.isfile(named):
+        return named
+    try:
+        names = os.listdir(s.ToolsPath)
+    except OSError:
+        return None
+    hits = sorted(n for n in names if re.search(rf"(?i)jumbo.*_T{take}[._].*\.(tar|tgz)$", n))
+    return os.path.join(s.ToolsPath, hits[0]) if hits else None
+
+
+def jumbo_route(s, take, source):
+    """('local', path) or ('cloud', None) for Auto/Local/Cloud."""
+    source = (source or "auto").lower()
+    path = find_bundle(s, take)
+    if source == "cloud":
+        return "cloud", None
+    if source == "local":
+        if not path:
+            raise FileNotFoundError(f"No Jumbo Take {take} bundle in {s.ToolsPath} (JumboSource = Local).")
+        return "local", path
+    return ("local", path) if path else ("cloud", None)
+
+
 # ---------------------------------------------------------------- prereqs --
 def prereqs(s, **_):
     ok = True
@@ -52,14 +80,18 @@ def prereqs(s, **_):
              ("Licence A-EPM", tool(s, "LicenseFile")),
              ("Service contract", tool(s, "ContractFile")),
              ("Deployment Agent", tool(s, "DeploymentAgent"))]
-    if str(s.JumboSource).lower() == "local":
-        files.append((f"Jumbo bundle (local, Take {s.JumboTake})", tool(s, "JumboBundle")))
+
     for name, p in files:
         if os.path.isfile(p):
             report(name, True, f"{p} ({os.path.getsize(p) / 1048576:,.1f} MB)")
         else:
             report(name, False, f"not found: {p}")
-    log.info(f"Jumbo stage will install Take {s.JumboTake} from {s.JumboSource}.")
+    try:
+        route, path = jumbo_route(s, int(s.JumboTake), s.JumboSource)
+        report(f"Jumbo Take {s.JumboTake}", True,
+               f"{s.JumboSource} -> local bundle {path}" if route == "local" else f"{s.JumboSource} -> CPUSE cloud download")
+    except FileNotFoundError as e:
+        report(f"Jumbo Take {s.JumboTake}", False, str(e))
     log.step("--- hosts ---")
     for name, ip in ((s.AEpmName, s.AEpmIp), (s.AEpm02Name, s.AEpm02Ip)):
         if not port_open(ip, int(os.environ.get('CCES_SSH_PORT', 22))):
@@ -154,9 +186,9 @@ def endpoint(s, skip_nat=False, keep_bash=False, **_):
 # ------------------------------------------------------------------ jumbo --
 def jumbo(s, target="A-EPM", take=None, source=None, skip_license_check=False, keep_bash=False, **_):
     take = int(take or s.JumboTake)
-    source = (source or s.JumboSource).lower()
+    source, bundle = jumbo_route(s, take, source or s.JumboSource)
     ip = target_ip(s, target)
-    log.step(f"Jumbo Take {take} on {target} ({ip}) - source: {source}")
+    log.step(f"Jumbo Take {take} on {target} ({ip}) - " + (f"local bundle {os.path.basename(bundle)}" if bundle else "CPUSE cloud download"))
     g = connect(s, ip)
     try:
         before = cpuse.installed_take(g)
@@ -174,7 +206,13 @@ def jumbo(s, target="A-EPM", take=None, source=None, skip_license_check=False, k
         else:
             if not g.init_shell_access():
                 raise RuntimeError("Shell access is needed to copy the bundle.")
-            remote = g.put_file(tool(s, "JumboBundle"), "/var/log")
+            need_mb = os.path.getsize(bundle) * 2 // 1048576      # the bundle plus room to unpack
+            df = g.bash("df -kP /var/log | tail -1 | tr -s ' ' | cut -d' ' -f4", 60, True).output
+            free_mb = int(df) // 1024 if df.strip().isdigit() else 0
+            if free_mb:
+                (log.info if free_mb >= need_mb else log.warn)(
+                    f"Free space in /var/log: {free_mb:,} MB (need about {need_mb:,} MB)")
+            remote = g.put_file(bundle, "/var/log")
             if not cpuse.import_local(g, remote, take):
                 return False
         if not cpuse.install(g, take):

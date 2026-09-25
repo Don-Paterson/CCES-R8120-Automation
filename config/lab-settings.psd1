@@ -43,10 +43,12 @@
     JumboBundle     = 'Check_Point_R81_20_JUMBO_HF_MAIN_Bundle_T26_FULL.tar'
 
     # --- Jumbo (Task 2A-3) - used by the Python edition ------------------------
-    # Take to install, and where from: Cloud = CPUSE downloads it (needs the licence
-    # and contract), Local = import JumboBundle from ToolsPath.
+    # Take to install, and where from:
+    #   Auto  = a bundle for that take in ToolsPath if there is one (any *jumbo*_T170*.tar/.tgz),
+    #           otherwise CPUSE downloads it from the cloud (needs the licence and contract)
+    #   Local = the bundle in ToolsPath, or stop;  Cloud = always download
     JumboTake       = 170
-    JumboSource     = 'Cloud'
+    JumboSource     = 'Auto'
 
     # --- behaviour -----------------------------------------------------------
     LogPath         = 'C:\CCES-Automation-Logs'

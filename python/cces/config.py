@@ -22,7 +22,7 @@ DEFAULTS = {
     "DeploymentAgent": "DeploymentAgent_000002337_1.tgz",
     "JumboBundle": "Check_Point_R81_20_JUMBO_HF_MAIN_Bundle_T26_FULL.tar",
     "JumboTake": 170,            # which Jumbo the Jumbo stage installs
-    "JumboSource": "Cloud",      # Cloud = CPUSE downloads it; Local = import JumboBundle from ToolsPath
+    "JumboSource": "Auto",       # Auto = a matching bundle in ToolsPath if present, else cloud; Local; Cloud
     "LogPath": r"C:\CCES-Automation-Logs",
     "RestoreClishShell": True,
 }
