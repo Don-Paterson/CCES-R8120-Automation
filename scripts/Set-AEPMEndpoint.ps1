@@ -57,7 +57,7 @@ if (-not $ObjectName)   { $ObjectName   = Get-CPSetting $cfg 'AEpmObjectName' 'A
 if (-not $NatIpv4)      { $NatIpv4      = Get-CPSetting $cfg 'AEpmNatIp'      '203.0.113.103' }
 
 $bladeEndpoint    = [bool](Get-CPSetting $cfg 'EnableEndpointPolicy'        $true)
-$bladeSeServer    = [bool](Get-CPSetting $cfg 'EnableSmartEventServer'      $false)
+$bladeSeServer    = [bool](Get-CPSetting $cfg 'EnableSmartEventServer'      $true)
 $bladeSeCorrelate = [bool](Get-CPSetting $cfg 'EnableSmartEventCorrelation' $true)
 $bladeLogging     = [bool](Get-CPSetting $cfg 'EnableLoggingAndStatus'      $true)
 

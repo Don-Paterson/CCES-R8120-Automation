@@ -27,7 +27,7 @@
     AEpmObjectName              = 'A-EPM'
     AEpmNatIp                   = '203.0.113.103'
     EnableEndpointPolicy        = $true
-    EnableSmartEventServer      = $false
+    EnableSmartEventServer      = $true
     EnableSmartEventCorrelation = $true
     EnableLoggingAndStatus      = $true
 

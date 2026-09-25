@@ -14,7 +14,7 @@ DEFAULTS = {
     "GaiaUser": "admin",
     "MgmtAdminUser": "cpadmin",
     "AEpmObjectName": "A-EPM", "AEpmNatIp": "203.0.113.103",
-    "EnableEndpointPolicy": True, "EnableSmartEventServer": False,
+    "EnableEndpointPolicy": True, "EnableSmartEventServer": True,
     "EnableSmartEventCorrelation": True, "EnableLoggingAndStatus": True,
     "ToolsPath": r"C:\Users\Admin\Desktop\Check Point Tools",
     "LicenseFile": r"Licenses\A-EPM.lic", "License02File": r"Licenses\A-EPM-02.lic",
